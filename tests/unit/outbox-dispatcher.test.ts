@@ -6,7 +6,10 @@ import {
   type OutboxFailureOutcome,
   type OutboxStore,
 } from '../../src/application/ports/outbox-store.ts';
-import { dispatchPendingBatch } from '../../src/infrastructure/queue/outbox-dispatcher.ts';
+import {
+  dispatchPendingBatch,
+  PermanentOutboxError,
+} from '../../src/infrastructure/queue/outbox-dispatcher.ts';
 
 type FakeRow = {
   id: string;
@@ -14,6 +17,7 @@ type FakeRow = {
   payload: unknown;
   attempts: number;
   publishedAt: Date | null;
+  status: 'pending' | 'published' | 'dead';
   lastError: string | null;
 };
 
@@ -30,7 +34,12 @@ class FakeOutboxStore implements OutboxStore {
 
   async claimPending(limit: number): Promise<OutboxEvent[]> {
     return this.rows
-      .filter((row) => row.publishedAt === null && row.attempts < OUTBOX_MAX_ATTEMPTS)
+      .filter(
+        (row) =>
+          row.status === 'pending' &&
+          row.publishedAt === null &&
+          row.attempts < OUTBOX_MAX_ATTEMPTS,
+      )
       .slice(0, limit)
       .map((row) => ({
         id: row.id,
@@ -42,7 +51,10 @@ class FakeOutboxStore implements OutboxStore {
 
   async markPublished(eventId: string, publishedAt: Date): Promise<void> {
     const row = this.rows.find((item) => item.id === eventId);
-    if (row) row.publishedAt = publishedAt;
+    if (row) {
+      row.publishedAt = publishedAt;
+      row.status = 'published';
+    }
   }
 
   async markFailed(eventId: string, error: string): Promise<OutboxFailureOutcome> {
@@ -53,13 +65,33 @@ class FakeOutboxStore implements OutboxStore {
     return row.attempts >= OUTBOX_MAX_ATTEMPTS ? 'exhausted' : 'retry';
   }
 
+  async markDead(eventId: string, error: string): Promise<boolean> {
+    const row = this.rows.find((item) => item.id === eventId);
+    if (!row || row.status === 'dead') return false;
+    row.status = 'dead';
+    row.lastError = error.slice(0, OUTBOX_LAST_ERROR_MAX_LENGTH);
+    return true;
+  }
+
   async countPending(): Promise<number> {
-    return this.rows.filter((row) => row.publishedAt === null).length;
+    return this.rows.filter((row) => row.status === 'pending').length;
+  }
+
+  async countDead(): Promise<number> {
+    return this.rows.filter((row) => row.status === 'dead').length;
   }
 }
 
 function row(id: string, attempts = 0, payload: unknown = { id }): FakeRow {
-  return { id, type: 'price.record', payload, attempts, publishedAt: null, lastError: null };
+  return {
+    id,
+    type: 'price.record',
+    payload,
+    attempts,
+    publishedAt: null,
+    status: 'pending',
+    lastError: null,
+  };
 }
 
 function setup(rows: FakeRow[], failingIds: string[] = []) {
@@ -132,5 +164,19 @@ describe('dispatchPendingBatch', () => {
     await dispatchPendingBatch(deps);
 
     expect(store.rows[0]?.publishedAt).toEqual(new Date('2026-01-01T00:00:00.000Z'));
+  });
+
+  it('envia falhas permanentes para a DLQ sem consumir tentativas', async () => {
+    const { deps, store } = setup([row('invalid'), row('healthy')]);
+    deps.publish = vi.fn(async (event) => {
+      if (event.id === 'invalid') throw new PermanentOutboxError('Payload inválido.');
+    });
+
+    await dispatchPendingBatch(deps);
+
+    expect(store.rows[0]?.status).toBe('dead');
+    expect(store.rows[0]?.lastError).toBe('Payload inválido.');
+    expect(store.rows[0]?.attempts).toBe(0);
+    expect(store.rows[1]?.status).toBe('published');
   });
 });

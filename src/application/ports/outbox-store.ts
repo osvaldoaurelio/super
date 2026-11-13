@@ -25,6 +25,10 @@ export interface OutboxStore {
   markPublished(eventId: string, publishedAt: Date): Promise<void>;
   /** Registra a falha e informa se o evento ainda pode ser tentado novamente. */
   markFailed(eventId: string, error: string): Promise<OutboxFailureOutcome>;
-  /** Quantidade de eventos pendentes de publicação (inclui os esgotados). */
+  /** Move o evento para a DLQ e retorna se ele foi marcado agora. */
+  markDead(eventId: string, error: string): Promise<boolean>;
+  /** Quantidade de eventos que aguardam publicação, inclusive esgotados. */
   countPending(): Promise<number>;
+  /** Quantidade de eventos atualmente na DLQ. */
+  countDead(): Promise<number>;
 }

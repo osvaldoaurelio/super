@@ -1,23 +1,17 @@
 import { Worker } from 'bullmq';
-import { Price } from '../../domain/prices/price.ts';
 import { DrizzlePriceRepository } from '../database/price-repository-drizzle.ts';
+import { DrizzleOutboxStore } from './drizzle-outbox-store.ts';
 import { RedisCache } from '../cache/redis-cache.ts';
 import { logger } from '../observability/logger.ts';
 import { getQueueRedis } from './price-queue.ts';
+import { processPriceJob } from './process-price-job.ts';
 
 const repository = new DrizzlePriceRepository();
+const outbox = new DrizzleOutboxStore();
 const cache = new RedisCache();
 export const priceWorker = new Worker(
   'price-ingestion',
-  async (job) => {
-    const price = Price.create({ ...job.data, observedAt: new Date(job.data.observedAt) });
-    await repository.record(price);
-    await Promise.all([
-      cache.bumpVersion(`prices:ver:${price.props.productId}`),
-      cache.bumpVersion(`history:ver:${price.props.productId}`),
-    ]);
-    return { stored: true };
-  },
+  async (job) => processPriceJob(job.data, job.id, { repository, cache, outbox }),
   { connection: getQueueRedis(), concurrency: 10 },
 );
 

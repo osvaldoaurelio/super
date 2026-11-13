@@ -110,7 +110,7 @@ Content-Type: application/json
 - **stores**: cadeia e localização; índice `(state, city)`.
 - **current_prices**: uma linha por `(product_id, store_id)`; índice `(product_id, price_cents)` para comparação ordenada e índice de unicidade do par.
 - **price_history**: observações imutáveis, centavos, origem e data; PK composta `(observed_at, id)`, índices `(product_id, observed_at)` e `(store_id, observed_at)`.
-- **outbox_events**: evento JSON e chave de idempotência única; índice parcial para eventos ainda não publicados; `attempts` e `last_error` registram as tentativas de publicação (o evento sai da seleção ao atingir 10 falhas, sem bloquear os demais).
+- **outbox_events**: evento JSON, chave de idempotência única e estado (`pending`, `published` ou `dead`); `attempts` e `last_error` registram falhas de publicação e a DLQ guarda falhas permanentes.
 
 Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual; comparações só retornam preços observados nos últimos 30 dias. A ingestão rejeita observações com mais de 5 minutos no futuro ou mais de 365 dias. A outbox fecha a janela de falha entre confirmar um request no PostgreSQL e publicar no Redis; o worker é idempotente e o dispatcher pode repetir entregas.
 
@@ -122,15 +122,24 @@ Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma 
 4. **Consulta quente curta:** comparação lê o snapshot `current_prices`, com filtro por produto/local e ordenação apoiada por índice; não varre o histórico. Resposta limitada a 100 ofertas.
 5. **Histórico de milhões de linhas:** índice por produto e data; intervalo de consulta limitado, payload projetado e paginação/limite. Métricas de `EXPLAIN (ANALYZE, BUFFERS)` e volume determinam quando habilitar partições mensais por `observed_at`, retenção/arquivamento e ingestão em lote. Planeje a tabela particionada e unicidade local conscientemente: no PostgreSQL, índices únicos de tabelas particionadas normalmente precisam incluir a chave de partição; mantenha deduplicação global na outbox ou adote tabela de idempotência dedicada antes dessa migração.
 6. **Redis de cache independente do Redis de fila:** cache usa `allkeys-lru` sem persistência; fila usa AOF e `noeviction`, pois expulsar chaves BullMQ corromperia o estado do job. Cache é best-effort, curto (60 s comparação, 300 s histórico), namespaced/versionado e invalidado após persistência. TTL limita inconsistências se invalidação falhar.
-7. **Fila/outbox:** payload leve, tentativas exponenciais, worker concorrente e idempotência. O dispatcher publica em lote, contabiliza falhas por evento (`attempts`/`last_error`) e segue para o próximo, de modo que um evento envenenado não bloqueie o backlog; `outbox_backlog_events` e `outbox_dispatch_failures_total` expõem o backlog e as falhas. Redis de fila precisa persistência, monitoramento, backup/teste de recuperação e política de jobs falhos antes da produção. A entrega é at-least-once.
+7. **Fila/outbox:** payload validado com Zod antes de enfileirar, tentativas exponenciais, worker concorrente e idempotência. Falhas permanentes (payload/regra inválidos ou FK inexistente) são marcadas `dead`, sem retry automático. Falhas transitórias ao publicar na fila são repetidas pelo dispatcher usando `attempts` da outbox; depois que o job entra no BullMQ, falhas transitórias do worker usam as tentativas do próprio BullMQ. `outbox_dead_events` e `outbox_dead_lettered_total` expõem a DLQ; `outbox_backlog_events` e `outbox_dispatch_failures_total` acompanham publicação e falhas. Jobs falhos retidos no BullMQ devem ser removidos antes de rearmar manualmente a linha correspondente: corrija a causa, remova o job falho com o mesmo ID se existir e, com autorização operacional, atualize a linha `dead` para `pending`, limpe `published_at`, `attempts` e `last_error`. Exemplo:
+
+   ```sql
+   UPDATE outbox_events
+   SET status = 'pending', published_at = NULL, attempts = 0, last_error = NULL
+   WHERE id = '<event-uuid>' AND status = 'dead';
+   ```
+
+   Redis de fila precisa persistência, monitoramento, backup/teste de recuperação e política de jobs falhos antes da produção. A entrega é at-least-once.
+
 8. **Auth:** token JWT curto HS256 com emissor/audiência validados; segredo mínimo de 32 caracteres fora do código. Senha usa scrypt e comparação em tempo constante. Em produção, preferir chaves assimétricas/rotação, refresh revogável, rate limiting e controles de abuso.
 9. **Observabilidade:** Pino JSON remove autorização/senhas; request-id correlaciona logs; OTel exporta traces OTLP quando configurado; Prometheus expõe séries de baixa cardinalidade (sem IDs individuais). Collector de exemplo exporta traces no log/debug, suficiente localmente — substitua por backend durável.
 10. **Operação:** migração executada como etapa única, healthcheck de readiness, containers não-root/read-only e Compose focado em desenvolvimento. Produção demanda TLS, secrets, backups, pooling/limites de conexões, alertas, HA e revisão de segurança.
 
 ## Testes
 
-- Unitários: invariantes de `Price`, cache-hit/miss do caso de comparação, JWT e hash de senha, e dispatcher da outbox (evento envenenado não bloqueia o lote, `attempts`/`last_error`, limite de tentativas).
-- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot e histórico, proteção contra eventos atrasados e seleção/atualização de eventos da outbox; CI provisiona Postgres e Redis.
+- Unitários: invariantes de `Price`, schema de payload da fila, tratamento de falha permanente/transitória, cache-hit/miss, JWT/hash de senha e dispatcher da outbox (evento envenenado, tentativas e DLQ).
+- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot/histórico, frescor, rejeição de FK na ingestão e estados/contagens da outbox; CI provisiona Postgres e Redis.
 - E2E: percorre a aplicação HTTP Hono por `app.request` sem abrir socket, validando OpenAPI, validação e proteção JWT. Para testes de socket/infra ponta a ponta, iniciar o Compose e exercitar o endpoint publicado num job de release.
 
 ## Roadmap

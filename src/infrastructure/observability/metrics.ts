@@ -18,7 +18,17 @@ export const httpDuration = new Histogram({
 });
 export const outboxBacklog = new Gauge({
   name: 'outbox_backlog_events',
-  help: 'Eventos da outbox ainda não publicados (inclui os que esgotaram tentativas)',
+  help: 'Eventos da outbox que aguardam publicação (inclui os que esgotaram tentativas)',
+  registers: [metricsRegistry],
+});
+export const outboxDeadEvents = new Gauge({
+  name: 'outbox_dead_events',
+  help: 'Eventos atualmente na dead-letter queue da outbox',
+  registers: [metricsRegistry],
+});
+export const outboxDeadLettered = new Counter({
+  name: 'outbox_dead_lettered_total',
+  help: 'Eventos movidos para a dead-letter queue da outbox',
   registers: [metricsRegistry],
 });
 export const outboxDispatchFailures = new Counter({
