@@ -4,7 +4,7 @@ import type {
   PriceOffer,
   PriceHistoryPoint,
 } from '../../application/ports/price-repository.ts';
-import type { Price } from '../../domain/prices/price.ts';
+import { PRICE_FRESHNESS_WINDOW_DAYS, type Price } from '../../domain/prices/price.ts';
 import { db } from './client.ts';
 import { currentPrices, priceHistory, stores } from './schema.ts';
 
@@ -16,6 +16,12 @@ export class DrizzlePriceRepository implements PriceRepository {
     const filters: SQL[] = [eq(currentPrices.productId, productId), eq(stores.active, true)];
     if (location.city) filters.push(eq(stores.city, location.city));
     if (location.state) filters.push(eq(stores.state, location.state.toUpperCase()));
+    filters.push(
+      gte(
+        currentPrices.observedAt,
+        sql`now() - (${PRICE_FRESHNESS_WINDOW_DAYS} * interval '1 day')`,
+      ),
+    );
     const rows = await db
       .select({
         storeId: stores.id,

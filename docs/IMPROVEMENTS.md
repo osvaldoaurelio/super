@@ -27,7 +27,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | --- | --------------------------------------------------------- | ---------- | ---- | ------------ | --------------------------------------------- |
 | P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026          |
 | P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
-| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ⬜ A fazer   | —                                             |
+| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
 | P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
@@ -97,15 +97,15 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 **Objetivo:** regra de domínio "preço atual = última observação dentro da janela de frescor"; impedir datas absurdas.
 
-- ⬜ 3.1 Em `Price.create`: rejeitar `observedAt` no futuro (> now + 5 min) e muito antigo (> 365 dias) com `DomainError` códigos dedicados.
-- ⬜ 3.2 Adicionar testes unitários para as duas novas invariantes em `tests/unit/price.test.ts`.
-- ⬜ 3.3 Definir constante de frescor (sugestão: 30 dias) em local compartilhado entre domínio/repositório.
-- ⬜ 3.4 Em `compare()`, adicionar filtro `observedAt >= now() - interval '<30 days>'`.
-- ⬜ 3.5 Documentar a regra de frescor no README (seção "Modelo de dados").
-- ⬜ 3.6 Teste de integração: oferta fora da janela não aparece em `compare`.
-- ⬜ 3.7 Executar validação (Skills → SV1, BP1, BP2, BP5).
+- [x] 3.1 Em `Price.create`: rejeitar `observedAt` no futuro (> now + 5 min) e muito antigo (> 365 dias) com `DomainError` códigos dedicados.
+- [x] 3.2 Adicionar testes unitários para as duas novas invariantes em `tests/unit/price.test.ts`.
+- [x] 3.3 Definir constante de frescor (sugestão: 30 dias) em local compartilhado entre domínio/repositório.
+- [x] 3.4 Em `compare()`, adicionar filtro `observedAt >= now() - interval '<30 days>'`.
+- [x] 3.5 Documentar a regra de frescor no README (seção "Modelo de dados").
+- [x] 3.6 Teste de integração: oferta fora da janela não aparece em `compare`.
+- [x] 3.7 Executar validação (Skills → SV1, BP1, BP2, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — PR/Data: `fix/price-freshness-window` — 13/11/2026
 
 ---
 
@@ -433,3 +433,4 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 | ---------- | ---- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 13/11/2026 | P1   | `fix/outbox-head-of-line`          | SV1: sem segredos/labels com ID no diff; desvio pré-existente de `process.env` em `src/http/app.ts` (`METRICS_TOKEN`) é escopo do P14. BP1: `typecheck`, `lint`, `format:check` verdes. BP5: `bun run test` 19/19; integração com PostgreSQL 5/5 (inclui `tests/integration/outbox-store.test.ts`). |
 | 13/11/2026 | P2   | `fix/cache-versioned-invalidation` | SV1: sem segredos/labels com ID no diff. BP1: `typecheck`, `lint`, `format:check` verdes. BP4: removido `SCAN`/`deleteByPrefix`, invalidação O(1) por versão de produto e TTLs preservados. BP5: `bun run test` 20/20 (unitários + E2E); sem alteração SQL.                                         |
+| 13/11/2026 | P3   | `fix/price-freshness-window`       | Concluído: SV1 sem segredos/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 integração PostgreSQL 6/6 (`prices.test.ts` inclui filtro de frescor); BP5 `bun run test` 24/24. PostgreSQL de teste descartável parado após a validação.                             |
