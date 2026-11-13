@@ -23,23 +23,23 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ## Sumário de status
 
-| ID  | Item                                                      | Severidade | Fase | Status       | PR/Data                              |
-| --- | --------------------------------------------------------- | ---------- | ---- | ------------ | ------------------------------------ |
-| P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026 |
-| P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ⬜ A fazer   | —                                    |
-| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ⬜ A fazer   | —                                    |
-| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
-| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
-| P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
-| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                    |
-| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
-| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
-| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
-| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
-| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
-| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
-| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
-| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer   | —                                    |
+| ID  | Item                                                      | Severidade | Fase | Status       | PR/Data                                       |
+| --- | --------------------------------------------------------- | ---------- | ---- | ------------ | --------------------------------------------- |
+| P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026          |
+| P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
+| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ⬜ A fazer   | —                                             |
+| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
+| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
+| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
+| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
+| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
+| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
+| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
+| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
+| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer   | —                                             |
 
 ---
 
@@ -72,20 +72,22 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ## P2 — Invalidação de cache via `SCAN` no hot path
 
+**Decisão (2.1):** usar bump de versão persistente por produto (`INCR` em `prices:ver:{productId}` e `history:ver:{productId}`). As chaves de versão não expiram: isso evita reutilizar uma versão antiga enquanto ainda houver chaves de dados criadas por uma consulta concorrente. Chaves de dados continuam limitadas pelos TTLs de 60 s / 300 s.
+
 **Arquivos:** `src/infrastructure/cache/redis-cache.ts`, `src/application/ports/cache.ts`, `src/application/use-cases/compare-prices.ts`, `src/application/use-cases/get-price-history.ts`, `src/infrastructure/queue/price-worker.ts`
 
 **Objetivo:** eliminar `SCAN` global do caminho de ingestão; bump de versão O(1) por produto.
 
-- ⬜ 2.1 Decidir estratégia e registrar aqui: bump de versão por produto (recomendado) **ou** `UNLINK` por chave exata.
-- ⬜ 2.2 Estender a porta `Cache` com `bumpVersion(key): Promise<number>` (implementação Redis `INCR`).
-- ⬜ 2.3 Montar chaves `prices:v2:{productId}:{ver}:{state|*}:{city|*}` no use-case de comparação (idem histórico: `history:v2:{productId}:{ver}:{days}:{limit}`).
-- ⬜ 2.4 No worker, substituir `cache.deleteByPrefix(...)` por `cache.bumpVersion(...)` (duas chamadas: `prices:ver` e `history:ver`).
-- ⬜ 2.5 Manter TTLs atuais (60 s / 300 s) como bound de consistência.
-- ⬜ 2.6 Remover `deleteByPrefix` da porta `Cache` **apenas** quando nenhum chamador restar (evitar API morta).
-- ⬜ 2.7 Atualizar testes unitários dos use-cases (chave com versão) e E2E se afetado.
-- ⬜ 2.8 Executar validação (Skills → SV1, BP1, BP4).
+- [x] 2.1 Decidir estratégia e registrar aqui: bump de versão por produto (recomendado) **ou** `UNLINK` por chave exata.
+- [x] 2.2 Estender a porta `Cache` com `bumpVersion(key): Promise<number>` (implementação Redis `INCR`).
+- [x] 2.3 Montar chaves `prices:v2:{productId}:{ver}:{state|*}:{city|*}` no use-case de comparação (idem histórico: `history:v2:{productId}:{ver}:{days}:{limit}`).
+- [x] 2.4 No worker, substituir `cache.deleteByPrefix(...)` por `cache.bumpVersion(...)` (duas chamadas: `prices:ver` e `history:ver`).
+- [x] 2.5 Manter TTLs atuais (60 s / 300 s) como bound de consistência.
+- [x] 2.6 Remover `deleteByPrefix` da porta `Cache` **apenas** quando nenhum chamador restar (evitar API morta).
+- [x] 2.7 Atualizar testes unitários dos use-cases (chave com versão) e E2E se afetado.
+- [x] 2.8 Executar validação (Skills → SV1, BP1, BP4).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — PR/Data: `fix/cache-versioned-invalidation` — 13/11/2026
 
 ---
 
@@ -427,6 +429,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
 ## Registro de execução
 
-| Data       | Item | PR/Branch                 | Resultado da validação                                                                                                                                                                                                                                                                              |
-| ---------- | ---- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 13/11/2026 | P1   | `fix/outbox-head-of-line` | SV1: sem segredos/labels com ID no diff; desvio pré-existente de `process.env` em `src/http/app.ts` (`METRICS_TOKEN`) é escopo do P14. BP1: `typecheck`, `lint`, `format:check` verdes. BP5: `bun run test` 19/19; integração com PostgreSQL 5/5 (inclui `tests/integration/outbox-store.test.ts`). |
+| Data       | Item | PR/Branch                          | Resultado da validação                                                                                                                                                                                                                                                                              |
+| ---------- | ---- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 13/11/2026 | P1   | `fix/outbox-head-of-line`          | SV1: sem segredos/labels com ID no diff; desvio pré-existente de `process.env` em `src/http/app.ts` (`METRICS_TOKEN`) é escopo do P14. BP1: `typecheck`, `lint`, `format:check` verdes. BP5: `bun run test` 19/19; integração com PostgreSQL 5/5 (inclui `tests/integration/outbox-store.test.ts`). |
+| 13/11/2026 | P2   | `fix/cache-versioned-invalidation` | SV1: sem segredos/labels com ID no diff. BP1: `typecheck`, `lint`, `format:check` verdes. BP4: removido `SCAN`/`deleteByPrefix`, invalidação O(1) por versão de produto e TTLs preservados. BP5: `bun run test` 20/20 (unitários + E2E); sem alteração SQL.                                         |

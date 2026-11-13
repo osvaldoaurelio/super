@@ -14,7 +14,8 @@ export class GetPriceHistory {
   }): Promise<PriceHistoryPoint[]> {
     const days = input.days ?? 90;
     const limit = input.limit ?? 500;
-    const key = `history:v1:${input.productId}:${days}:${limit}`;
+    const version = (await this.cache.get<number>(`history:ver:${input.productId}`)) ?? 0;
+    const key = `history:v2:${input.productId}:${version}:${days}:${limit}`;
     const cached = await this.cache.get<PriceHistoryPoint[]>(key);
     if (cached) return cached;
     const points = await this.repository.history(

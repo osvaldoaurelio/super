@@ -1,6 +1,7 @@
 import Redis from 'ioredis';
 import type { Cache } from '../../application/ports/cache.ts';
 import { env } from '../../config/env.ts';
+import { logger } from '../observability/logger.ts';
 
 export class RedisCache implements Cache {
   private redis: Redis | undefined;
@@ -34,16 +35,12 @@ export class RedisCache implements Cache {
     }
   }
 
-  async deleteByPrefix(prefix: string): Promise<void> {
+  async bumpVersion(key: string): Promise<number> {
     try {
-      let cursor = '0';
-      do {
-        const [next, keys] = await this.client().scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 200);
-        cursor = next;
-        if (keys.length) await this.client().unlink(...keys);
-      } while (cursor !== '0');
-    } catch {
-      /* Cache invalidation failure is bounded by TTL. */
+      return await this.client().incr(key);
+    } catch (error) {
+      logger.warn({ err: error, key }, 'cache_version_bump_failed');
+      return 0;
     }
   }
 

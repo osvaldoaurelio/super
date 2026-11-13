@@ -25,7 +25,7 @@ function setup() {
     set: vi.fn(async <T>(key: string, value: T) => {
       values.set(key, value);
     }),
-    deleteByPrefix: vi.fn(),
+    bumpVersion: vi.fn(async () => 1),
   };
   return { useCase: new ComparePrices(repository, cache), repository, cache, offers };
 }
@@ -33,11 +33,12 @@ function setup() {
 describe('ComparePrices', () => {
   it('reads from repository on cache miss and caches result', async () => {
     const { useCase, repository, cache, offers } = setup();
+    await cache.set('prices:ver:p1', 7, 300);
     await expect(
       useCase.execute({ productId: 'p1', city: 'São Paulo', state: 'SP' }),
     ).resolves.toEqual(offers);
     expect(repository.compare).toHaveBeenCalledOnce();
-    expect(cache.set).toHaveBeenCalledOnce();
+    expect(cache.set).toHaveBeenLastCalledWith('prices:v2:p1:7:SP:S%C3%A3o%20Paulo', offers, 60);
   });
 
   it('returns cached result without querying repository', async () => {

@@ -12,8 +12,10 @@ export const priceWorker = new Worker(
   async (job) => {
     const price = Price.create({ ...job.data, observedAt: new Date(job.data.observedAt) });
     await repository.record(price);
-    await cache.deleteByPrefix(`prices:v1:${price.props.productId}:`);
-    await cache.deleteByPrefix(`history:v1:${price.props.productId}:`);
+    await Promise.all([
+      cache.bumpVersion(`prices:ver:${price.props.productId}`),
+      cache.bumpVersion(`history:ver:${price.props.productId}`),
+    ]);
     return { stored: true };
   },
   { connection: getQueueRedis(), concurrency: 10 },

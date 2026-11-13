@@ -12,7 +12,8 @@ export class ComparePrices {
     city?: string;
     state?: string;
   }): Promise<PriceOffer[]> {
-    const key = `prices:v1:${input.productId}:${input.state ?? '*'}:${input.city ? encodeURIComponent(input.city) : '*'}`;
+    const version = (await this.cache.get<number>(`prices:ver:${input.productId}`)) ?? 0;
+    const key = `prices:v2:${input.productId}:${version}:${input.state ?? '*'}:${input.city ? encodeURIComponent(input.city) : '*'}`;
     const cached = await this.cache.get<PriceOffer[]>(key);
     if (cached) return cached;
     const location: { city?: string; state?: string } = {};
