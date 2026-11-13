@@ -17,6 +17,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
   const repository = new DrizzlePriceRepository();
   let productId = '';
   let storeId = '';
+  let staleStoreId = '';
   beforeAll(async () => {
     await runIntegrationSetup();
     const [product] = await db
@@ -37,6 +38,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       await db.delete(priceHistory).where(eq(priceHistory.productId, productId));
       await db.delete(products).where(eq(products.id, productId));
     }
+    if (staleStoreId) await db.delete(stores).where(eq(stores.id, staleStoreId));
     if (storeId) await db.delete(stores).where(eq(stores.id, storeId));
     await closeDatabase();
   });
@@ -82,5 +84,28 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     );
     const offers = await repository.compare(productId);
     expect(offers[0]?.priceCents).toBe(800);
+  });
+
+  it('does not return current prices outside the freshness window', async () => {
+    const [staleStore] = await db
+      .insert(stores)
+      .values({ name: 'Loja desatualizada', chain: 'Rede', city: 'São Paulo', state: 'SP' })
+      .returning();
+    if (!staleStore) throw new Error('Fixture indisponível.');
+    staleStoreId = staleStore.id;
+    await repository.record(
+      Price.create({
+        productId,
+        storeId: staleStoreId,
+        priceCents: 100,
+        observedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000),
+        source: 'test',
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    );
+
+    const offers = await repository.compare(productId);
+
+    expect(offers.some((offer) => offer.storeId === staleStoreId)).toBe(false);
   });
 });

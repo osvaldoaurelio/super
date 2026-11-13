@@ -112,7 +112,7 @@ Content-Type: application/json
 - **price_history**: observações imutáveis, centavos, origem e data; PK composta `(observed_at, id)`, índices `(product_id, observed_at)` e `(store_id, observed_at)`.
 - **outbox_events**: evento JSON e chave de idempotência única; índice parcial para eventos ainda não publicados; `attempts` e `last_error` registram as tentativas de publicação (o evento sai da seleção ao atingir 10 falhas, sem bloquear os demais).
 
-Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual. A outbox fecha a janela de falha entre confirmar um request no PostgreSQL e publicar no Redis; o worker é idempotente e o dispatcher pode repetir entregas.
+Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual; comparações só retornam preços observados nos últimos 30 dias. A ingestão rejeita observações com mais de 5 minutos no futuro ou mais de 365 dias. A outbox fecha a janela de falha entre confirmar um request no PostgreSQL e publicar no Redis; o worker é idempotente e o dispatcher pode repetir entregas.
 
 ## Decisões e escalabilidade
 
