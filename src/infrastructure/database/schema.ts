@@ -116,10 +116,13 @@ export const outboxEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull().unique(),
+    attempts: integer('attempts').default(0).notNull(),
+    lastError: text('last_error'),
   },
   (table) => [
     index('outbox_unpublished_idx')
       .on(table.createdAt)
       .where(sql`${table.publishedAt} is null`),
+    check('outbox_attempts_non_negative', sql`${table.attempts} >= 0`),
   ],
 );

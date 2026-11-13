@@ -12,34 +12,34 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ### Legenda de status
 
-| Marcador | Significado |
-|----------|-------------|
-| `⬜ A fazer` | Item ainda não iniciado |
-| `🚧 Em andamento` | Trabalho iniciado; indicar branch/PR |
-| `✅ Concluído` | Todos os passos marcados e validação executada |
-| `⏸️ Bloqueado` | Aguarda decisão externa ou dependência |
+| Marcador          | Significado                                    |
+| ----------------- | ---------------------------------------------- |
+| `⬜ A fazer`      | Item ainda não iniciado                        |
+| `🚧 Em andamento` | Trabalho iniciado; indicar branch/PR           |
+| `✅ Concluído`    | Todos os passos marcados e validação executada |
+| `⏸️ Bloqueado`    | Aguarda decisão externa ou dependência         |
 
 ---
 
 ## Sumário de status
 
-| ID | Item | Severidade | Fase | Status | PR/Data |
-|----|------|-----------|------|--------|---------|
-| P1 | Head-of-line blocking no dispatcher da outbox | 🔴 Crítico | V1 | ⬜ A fazer | — |
-| P2 | Invalidação de cache via `SCAN` no hot path | 🔴 Crítico | V1 | ⬜ A fazer | — |
-| P3 | Comparação sem frescor + `observedAt` no futuro | 🔴 Crítico | V1 | ⬜ A fazer | — |
-| P4 | Ingestão sem validação de payload, DLQ e feedback | 🟠 Alto | V1 | ⬜ A fazer | — |
-| P5 | Over-engineering: outbox → polling → BullMQ | 🟠 Alto | V1 | ⬜ A fazer | — |
-| P6 | Rate limiting configurado mas não implementado | 🟠 Alto | V1 | ⬜ A fazer | — |
-| P7 | Busca, geo, alertas e cesta ausentes | 🟠 Alto | V2 | ⬜ A fazer | — |
-| P8 | Idempotência global por chave única | 🟡 Médio | V1 | ⬜ A fazer | — |
-| P9 | Paginação cursor-based ausente | 🟡 Médio | V2 | ⬜ A fazer | — |
-| P10 | Modelo sem tipo de preço (promo vs regular) | 🟡 Médio | V2 | ⬜ A fazer | — |
-| P11 | Módulo de auth com camadas inconsistentes | 🟡 Médio | V1 | ⬜ A fazer | — |
-| P12 | Métricas de domínio e trace nos jobs ausentes | 🟡 Médio | V2 | ⬜ A fazer | — |
-| P13 | Drift de migrações e índice fantasma | 🟡 Médio | V1 | ⬜ A fazer | — |
-| P14 | `/health/worker` enganoso + `process.env` fora do `env` | 🟡 Médio | V1 | ⬜ A fazer | — |
-| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo | V2 | ⬜ A fazer | — |
+| ID  | Item                                                      | Severidade | Fase | Status       | PR/Data                              |
+| --- | --------------------------------------------------------- | ---------- | ---- | ------------ | ------------------------------------ |
+| P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026 |
+| P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ⬜ A fazer   | —                                    |
+| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ⬜ A fazer   | —                                    |
+| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
+| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
+| P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                    |
+| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                    |
+| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
+| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
+| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
+| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
+| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer   | —                                    |
+| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
+| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer   | —                                    |
+| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer   | —                                    |
 
 ---
 
@@ -51,15 +51,22 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 **Objetivo:** um evento que falha repetidamente não pode travar a publicação dos demais; o backlog precisa ser observável.
 
-- ⬜ 1.1 Adicionar colunas `attempts integer NOT NULL DEFAULT 0` e `last_error text` em `outbox_events` (`schema.ts`).
-- ⬜ 1.2 Gerar migração com `bun run db:generate`, revisar o SQL e o journal.
-- ⬜ 1.3 Alterar a query do dispatcher para filtrar `attempts < 10`.
-- ⬜ 1.4 No `catch`, incrementar `attempts` e gravar `last_error` (truncado em 500 chars); **remover o `break`**.
-- ⬜ 1.5 Adicionar gauge `outbox_backlog_events` (contagem de `publishedAt is null`) e counter `outbox_dispatch_failures_total` em `metrics.ts`.
-- ⬜ 1.6 Teste unitário do dispatcher com fake de banco/queue cobrindo: evento envenenado não bloqueia os seguintes; evento atinge `attempts = 10` e deixa de ser selecionado.
-- ⬜ 1.7 Executar validação (Skills → SV1, BP1, BP5).
+- [x] 1.1 Adicionar colunas `attempts integer NOT NULL DEFAULT 0` e `last_error text` em `outbox_events` (`schema.ts`).
+- [x] 1.2 Gerar migração com `bun run db:generate`, revisar o SQL e o journal (`drizzle/0001_lame_venus.sql`).
+- [x] 1.3 Alterar a query do dispatcher para filtrar `attempts < 10` (`DrizzleOutboxStore.claimPending`).
+- [x] 1.4 No `catch`, incrementar `attempts` e gravar `last_error` (truncado em 500 chars); **remover o `break`** (`markFailed` + `dispatchPendingBatch`).
+- [x] 1.5 Adicionar gauge `outbox_backlog_events` (contagem de `publishedAt is null`) e counter `outbox_dispatch_failures_total` em `metrics.ts`.
+- [x] 1.6 Teste unitário do dispatcher com fake de banco/queue cobrindo: evento envenenado não bloqueia os seguintes; evento atinge `attempts = 10` e deixa de ser selecionado.
+- [x] 1.7 Executar validação (Skills → SV1, BP1, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — PR/Data: `fix/outbox-head-of-line` — 13/11/2026
+
+**Notas de implementação:**
+
+- A porta `OutboxStore` (`application/ports/outbox-store.ts`) foi extraída para permitir doubles nos testes; o adaptador Drizzle fica em `infrastructure/queue/drizzle-outbox-store.ts` e o dispatcher recebe `store`/`publish`/`sleep`/`now` por injeção.
+- O `SELECT ... FOR UPDATE SKIP LOCKED` anterior rodava em transação encerrada antes do `publish` (lock sem efeito). A publicação continua at-least-once e a duplicidade é contida pelo `jobId = event.id` no BullMQ; a atualização de `attempts`/`publishedAt` é condicional a `published_at is null`.
+- Falhas de infraestrutura do próprio store (Postgres indisponível) são logadas e o loop volta após 5 s, sem encerrar o dispatcher.
+- Evento que atinge 10 tentativas permanece com `published_at is null` e é contado em `outbox_backlog_events`, sinalizando backlog crescente (DLQ formal é escopo do P4).
 
 ---
 
@@ -318,15 +325,15 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 # Fase V3 — escala e maturidade (gatilhos baseados em dados)
 
-| ID | Item | Gatilho sugerido | Status |
-|----|------|------------------|--------|
-| V3-1 | Particionamento mensal de `price_history` | Tabela > 50–100 M linhas ou janelas de consulta > 1 s | ⬜ A fazer |
-| V3-2 | Read replica para leitura (comparação/histórico) | CPU de leitura > 60 % sustentado | ⬜ A fazer |
-| V3-3 | OLAP próprio (materialized views ou ClickHouse) para tendências | Dashboards consultando histórico bruto | ⬜ A fazer |
-| V3-4 | Matching de produtos multi-fonte (GTIN canônico + resolução fuzzy assíncrona) | Catálogo > 100k produtos multi-fonte | ⬜ A fazer |
-| V3-5 | JWT assimétrico (RS256) com rotação e refresh revogável | Multi-cliente / app mobile | ⬜ A fazer |
-| V3-6 | Separação em serviços (ingestão vs consulta vs alertas) | Apenas com evidência de gargalo operacional | ⬜ A fazer |
-| V3-7 | Multi-região/tenant | Demanda de expansão geográfica confirmada | ⬜ A fazer |
+| ID   | Item                                                                          | Gatilho sugerido                                      | Status     |
+| ---- | ----------------------------------------------------------------------------- | ----------------------------------------------------- | ---------- |
+| V3-1 | Particionamento mensal de `price_history`                                     | Tabela > 50–100 M linhas ou janelas de consulta > 1 s | ⬜ A fazer |
+| V3-2 | Read replica para leitura (comparação/histórico)                              | CPU de leitura > 60 % sustentado                      | ⬜ A fazer |
+| V3-3 | OLAP próprio (materialized views ou ClickHouse) para tendências               | Dashboards consultando histórico bruto                | ⬜ A fazer |
+| V3-4 | Matching de produtos multi-fonte (GTIN canônico + resolução fuzzy assíncrona) | Catálogo > 100k produtos multi-fonte                  | ⬜ A fazer |
+| V3-5 | JWT assimétrico (RS256) com rotação e refresh revogável                       | Multi-cliente / app mobile                            | ⬜ A fazer |
+| V3-6 | Separação em serviços (ingestão vs consulta vs alertas)                       | Apenas com evidência de gargalo operacional           | ⬜ A fazer |
+| V3-7 | Multi-região/tenant                                                           | Demanda de expansão geográfica confirmada             | ⬜ A fazer |
 
 ---
 
@@ -420,6 +427,6 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
 ## Registro de execução
 
-| Data | Item | PR/Branch | Resultado da validação |
-|------|------|-----------|------------------------|
-| — | — | — | — |
+| Data       | Item | PR/Branch                 | Resultado da validação                                                                                                                                                                                                                                                                              |
+| ---------- | ---- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 13/11/2026 | P1   | `fix/outbox-head-of-line` | SV1: sem segredos/labels com ID no diff; desvio pré-existente de `process.env` em `src/http/app.ts` (`METRICS_TOKEN`) é escopo do P14. BP1: `typecheck`, `lint`, `format:check` verdes. BP5: `bun run test` 19/19; integração com PostgreSQL 5/5 (inclui `tests/integration/outbox-store.test.ts`). |
