@@ -1,0 +1,182 @@
+name: super-api
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
+      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
+      JWT_ISSUER: ${JWT_ISSUER:-super-api}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
+    ports: ['127.0.0.1:3000:3000']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis-cache: { condition: service_healthy }
+      redis-queue: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      otel-collector: { condition: service_started }
+    command: bun run start
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://localhost:3000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
+      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
+      JWT_ISSUER: ${JWT_ISSUER:-super-api}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
+    command: bun run worker
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis-queue: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      otel-collector: { condition: service_started }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
+      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
+      JWT_ISSUER: ${JWT_ISSUER:-super-api}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
+    command: bun run db:migrate
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-super}
+      POSTGRES_USER: ${POSTGRES_USER:-super}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-super}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U super -d super']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis-cache:
+    image: redis:7-alpine
+    command:
+      [
+        'redis-server',
+        '--maxmemory',
+        '256mb',
+        '--maxmemory-policy',
+        'allkeys-lru',
+        '--appendonly',
+        'no',
+      ]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:7-alpine
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--maxmemory',
+        '512mb',
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes: [redis_queue_data:/data]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    command: ['--config.file=/etc/prometheus/prometheus.yml', '--storage.tsdb.retention.time=15d']
+    volumes: ['./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro']
+    ports: ['127.0.0.1:9090:9090']
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'sed "s|__METRICS_TOKEN__|$$METRICS_TOKEN|g" /etc/prometheus/prometheus.yml > /tmp/prometheus.yml && exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.retention.time=15d'
+    depends_on: [api]
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change-this-in-production}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports: ['127.0.0.1:3001:3000']
+    depends_on: [prometheus]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.122.1
+    command: ['--config=/etc/otel-collector-config.yml']
+    volumes: ['./monitoring/otel-collector.yml:/etc/otel-collector-config.yml:ro']
+    ports: ['127.0.0.1:4318:4318']
+
+volumes:
+  postgres_data:
+  redis_queue_data:
+  grafana_data:
