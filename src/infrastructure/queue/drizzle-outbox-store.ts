@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   OUTBOX_LAST_ERROR_MAX_LENGTH,
   OUTBOX_MAX_ATTEMPTS,
@@ -25,7 +25,13 @@ export class DrizzleOutboxStore implements OutboxStore {
         attempts: outboxEvents.attempts,
       })
       .from(outboxEvents)
-      .where(and(isNull(outboxEvents.publishedAt), lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS)))
+      .where(
+        and(
+          eq(outboxEvents.status, 'pending'),
+          isNull(outboxEvents.publishedAt),
+          lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS),
+        ),
+      )
       .orderBy(asc(outboxEvents.createdAt))
       .limit(limit);
   }
@@ -33,8 +39,14 @@ export class DrizzleOutboxStore implements OutboxStore {
   async markPublished(eventId: string, publishedAt: Date): Promise<void> {
     await db
       .update(outboxEvents)
-      .set({ publishedAt })
-      .where(and(eq(outboxEvents.id, eventId), isNull(outboxEvents.publishedAt)));
+      .set({ publishedAt, status: 'published' })
+      .where(
+        and(
+          eq(outboxEvents.id, eventId),
+          eq(outboxEvents.status, 'pending'),
+          isNull(outboxEvents.publishedAt),
+        ),
+      );
   }
 
   async markFailed(eventId: string, error: string): Promise<OutboxFailureOutcome> {
@@ -44,17 +56,34 @@ export class DrizzleOutboxStore implements OutboxStore {
         attempts: sql`${outboxEvents.attempts} + 1`,
         lastError: truncateError(error),
       })
-      .where(eq(outboxEvents.id, eventId))
+      .where(and(eq(outboxEvents.id, eventId), eq(outboxEvents.status, 'pending')))
       .returning({ attempts: outboxEvents.attempts });
     const attempts = row?.attempts ?? OUTBOX_MAX_ATTEMPTS;
     return attempts >= OUTBOX_MAX_ATTEMPTS ? 'exhausted' : 'retry';
+  }
+
+  async markDead(eventId: string, error: string): Promise<boolean> {
+    const [row] = await db
+      .update(outboxEvents)
+      .set({ status: 'dead', lastError: truncateError(error) })
+      .where(and(eq(outboxEvents.id, eventId), ne(outboxEvents.status, 'dead')))
+      .returning({ id: outboxEvents.id });
+    return row !== undefined;
   }
 
   async countPending(): Promise<number> {
     const [row] = await db
       .select({ pending: sql<number>`count(*)::int` })
       .from(outboxEvents)
-      .where(isNull(outboxEvents.publishedAt));
+      .where(eq(outboxEvents.status, 'pending'));
     return row?.pending ?? 0;
+  }
+
+  async countDead(): Promise<number> {
+    const [row] = await db
+      .select({ dead: sql<number>`count(*)::int` })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.status, 'dead'));
+    return row?.dead ?? 0;
   }
 }

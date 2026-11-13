@@ -115,6 +115,7 @@ export const outboxEvents = pgTable(
     payload: jsonb('payload').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
+    status: varchar('status', { length: 16 }).default('pending').notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull().unique(),
     attempts: integer('attempts').default(0).notNull(),
     lastError: text('last_error'),
@@ -124,5 +125,6 @@ export const outboxEvents = pgTable(
       .on(table.createdAt)
       .where(sql`${table.publishedAt} is null`),
     check('outbox_attempts_non_negative', sql`${table.attempts} >= 0`),
+    check('outbox_status_valid', sql`${table.status} in ('pending', 'published', 'dead')`),
   ],
 );

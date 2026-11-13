@@ -1,9 +1,14 @@
 import type { OutboxEvent, OutboxStore } from '../../application/ports/outbox-store.ts';
-import type { PriceProps } from '../../domain/prices/price.ts';
 import { logger } from '../observability/logger.ts';
-import { outboxBacklog, outboxDispatchFailures } from '../observability/metrics.ts';
+import {
+  outboxBacklog,
+  outboxDeadEvents,
+  outboxDeadLettered,
+  outboxDispatchFailures,
+} from '../observability/metrics.ts';
 import { DrizzleOutboxStore } from './drizzle-outbox-store.ts';
 import { getPriceQueue } from './price-queue.ts';
+import { PricePropsSchema } from './price-props-schema.ts';
 
 /** Eventos lidos por ciclo do dispatcher. */
 export const OUTBOX_BATCH_SIZE = 50;
@@ -13,6 +18,13 @@ const STORE_FAILURE_SLEEP_MS = 5_000;
 const BACKLOG_REFRESH_MS = 15_000;
 
 export type OutboxPublisher = (event: OutboxEvent) => Promise<void>;
+
+export class PermanentOutboxError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentOutboxError';
+  }
+}
 
 export type OutboxDispatcherDeps = {
   store: OutboxStore;
@@ -44,6 +56,13 @@ export async function dispatchPendingBatch(
       await deps.publish(event);
       await deps.store.markPublished(event.id, deps.now());
     } catch (error) {
+      if (error instanceof PermanentOutboxError) {
+        const markedDead = await deps.store.markDead(event.id, error.message);
+        if (markedDead) outboxDeadLettered.inc();
+        outboxDispatchFailures.inc({ outcome: 'dead' });
+        logger.error({ eventId: event.id, eventType: event.type, err: error }, 'outbox_event_dead');
+        continue;
+      }
       const outcome = await deps.store.markFailed(event.id, toErrorMessage(error));
       outboxDispatchFailures.inc({ outcome });
       logger.error(
@@ -63,7 +82,9 @@ export async function dispatchPendingBatch(
 }
 
 export async function refreshOutboxBacklog(store: OutboxStore): Promise<void> {
-  outboxBacklog.set(await store.countPending());
+  const [pending, dead] = await Promise.all([store.countPending(), store.countDead()]);
+  outboxBacklog.set(pending);
+  outboxDeadEvents.set(dead);
 }
 
 let stopping = false;
@@ -93,10 +114,16 @@ export async function runOutboxDispatcher(
 
 async function publishOutboxEvent(event: OutboxEvent): Promise<void> {
   if (event.type !== 'price.record') {
-    throw new Error(`Tipo de evento de outbox não suportado: ${event.type}`);
+    throw new PermanentOutboxError(`Tipo de evento de outbox não suportado: ${event.type}`);
   }
-  // O cast será removido em P4, junto com a validação Zod do payload na fronteira.
-  await getPriceQueue().add('record-price', event.payload as PriceProps, { jobId: event.id });
+  const parsed = PricePropsSchema.safeParse(event.payload);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join('.') || 'payload'}: ${issue.message}`)
+      .join('; ');
+    throw new PermanentOutboxError(`Payload inválido: ${issues}`);
+  }
+  await getPriceQueue().add('record-price', parsed.data, { jobId: event.id });
 }
 
 export function createOutboxDispatcherDeps(): OutboxDispatcherDeps {

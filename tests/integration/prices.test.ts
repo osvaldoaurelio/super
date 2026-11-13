@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '../../src/infrastructure/database/client.ts';
 import {
   currentPrices,
@@ -10,14 +10,19 @@ import {
 import { closeDatabase } from '../../src/infrastructure/database/client.ts';
 import { Price } from '../../src/domain/prices/price.ts';
 import { DrizzlePriceRepository } from '../../src/infrastructure/database/price-repository-drizzle.ts';
+import { DrizzleOutboxStore } from '../../src/infrastructure/queue/drizzle-outbox-store.ts';
+import { processPriceJob } from '../../src/infrastructure/queue/process-price-job.ts';
 import { runIntegrationSetup } from '../support/integration-setup.ts';
+import { outboxEvents } from '../../src/infrastructure/database/schema.ts';
 
 const describeIntegration = process.env['RUN_INTEGRATION'] === '1' ? describe : describe.skip;
 describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
   const repository = new DrizzlePriceRepository();
+  const outbox = new DrizzleOutboxStore();
   let productId = '';
   let storeId = '';
   let staleStoreId = '';
+  const outboxIds: string[] = [];
   beforeAll(async () => {
     await runIntegrationSetup();
     const [product] = await db
@@ -40,6 +45,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     }
     if (staleStoreId) await db.delete(stores).where(eq(stores.id, staleStoreId));
     if (storeId) await db.delete(stores).where(eq(stores.id, storeId));
+    if (outboxIds.length) await db.delete(outboxEvents).where(inArray(outboxEvents.id, outboxIds));
     await closeDatabase();
   });
   it('persists observations and returns comparison and history in centavos', async () => {
@@ -107,5 +113,47 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     const offers = await repository.compare(productId);
 
     expect(offers.some((offer) => offer.storeId === staleStoreId)).toBe(false);
+  });
+
+  it('moves a price job with a missing foreign key to dead', async () => {
+    const missingProductId = crypto.randomUUID();
+    const [event] = await db
+      .insert(outboxEvents)
+      .values({
+        type: 'price.record',
+        payload: { productId: missingProductId },
+        idempotencyKey: crypto.randomUUID(),
+        status: 'published',
+        publishedAt: new Date(),
+      })
+      .returning({ id: outboxEvents.id });
+    if (!event) throw new Error('Fixture de outbox indisponível.');
+    outboxIds.push(event.id);
+
+    await expect(
+      processPriceJob(
+        {
+          productId: missingProductId,
+          storeId,
+          priceCents: 500,
+          observedAt: new Date().toISOString(),
+          source: 'test',
+          idempotencyKey: crypto.randomUUID(),
+        },
+        event.id,
+        {
+          repository,
+          cache: { bumpVersion: async () => 1 },
+          outbox,
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'UnrecoverableError' });
+
+    const [row] = await db
+      .select({ status: outboxEvents.status, lastError: outboxEvents.lastError })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.id, event.id));
+    expect(row?.status).toBe('dead');
+    expect(row?.lastError).toBeTruthy();
   });
 });

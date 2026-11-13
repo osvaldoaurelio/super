@@ -15,6 +15,13 @@
       "when": 1794540387108,
       "tag": "0001_lame_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794604024002,
+      "tag": "0002_nosy_chamber",
+      "breakpoints": true
     }
   ]
 }

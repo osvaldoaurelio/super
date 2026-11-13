@@ -28,7 +28,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026          |
 | P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
 | P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
-| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído | fix/ingestion-dlq-feedback — 13/11/2026       |
 | P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
@@ -55,7 +55,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 - [x] 1.2 Gerar migração com `bun run db:generate`, revisar o SQL e o journal (`drizzle/0001_lame_venus.sql`).
 - [x] 1.3 Alterar a query do dispatcher para filtrar `attempts < 10` (`DrizzleOutboxStore.claimPending`).
 - [x] 1.4 No `catch`, incrementar `attempts` e gravar `last_error` (truncado em 500 chars); **remover o `break`** (`markFailed` + `dispatchPendingBatch`).
-- [x] 1.5 Adicionar gauge `outbox_backlog_events` (contagem de `publishedAt is null`) e counter `outbox_dispatch_failures_total` em `metrics.ts`.
+- [x] 1.5 Adicionar gauge `outbox_backlog_events` (pendentes, inclusive os esgotados) e counter `outbox_dispatch_failures_total` em `metrics.ts`.
 - [x] 1.6 Teste unitário do dispatcher com fake de banco/queue cobrindo: evento envenenado não bloqueia os seguintes; evento atinge `attempts = 10` e deixa de ser selecionado.
 - [x] 1.7 Executar validação (Skills → SV1, BP1, BP5).
 
@@ -115,15 +115,15 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 **Objetivo:** payload validado na fronteira; falha definitiva vai para DLQ observável; sem casts injustificados.
 
-- ⬜ 4.1 Criar `PricePropsSchema` (Zod) espelhando `PriceProps`; usar na validação do `event.payload` no dispatcher.
-- ⬜ 4.2 Remover o cast `event.payload as PriceProps`.
-- ⬜ 4.3 Falha de validação/FK (erro definitivo) → mover evento para estado `dead` (coluna `status` na outbox) com `last_error`.
-- ⬜ 4.4 Falha transiente (Redis, conexão) → deixar o retry do BullMQ/BullMQ attempts agir.
-- ⬜ 4.5 Gauge/counter de eventos em `dead` + entrada no README sobre DLQ/replay.
-- ⬜ 4.6 Testes: payload inválido não vira veneno silencioso; FK inexistente termina em `dead`.
-- ⬜ 4.7 Executar validação (Skills → SV1, BP1, BP5).
+- [x] 4.1 Criar `PricePropsSchema` (Zod) espelhando `PriceProps`; usar na validação do `event.payload` no dispatcher e do job no worker.
+- [x] 4.2 Remover o cast `event.payload as PriceProps`.
+- [x] 4.3 Falha de validação/FK (erro definitivo) → mover evento para estado `dead` (coluna `status` na outbox) com `last_error`.
+- [x] 4.4 Falha transitória no dispatch usa tentativas da outbox; falha transitória do worker continua retryable pelo BullMQ.
+- [x] 4.5 Gauge/counter de eventos em `dead` + entrada no README sobre DLQ/replay.
+- [x] 4.6 Testes: payload inválido não vira veneno silencioso; FK inexistente termina em `dead`.
+- [x] 4.7 Executar validação (Skills → SV1, BP1, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — PR/Data: `fix/ingestion-dlq-feedback` — 13/11/2026
 
 ---
 
@@ -434,3 +434,4 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 | 13/11/2026 | P1   | `fix/outbox-head-of-line`          | SV1: sem segredos/labels com ID no diff; desvio pré-existente de `process.env` em `src/http/app.ts` (`METRICS_TOKEN`) é escopo do P14. BP1: `typecheck`, `lint`, `format:check` verdes. BP5: `bun run test` 19/19; integração com PostgreSQL 5/5 (inclui `tests/integration/outbox-store.test.ts`). |
 | 13/11/2026 | P2   | `fix/cache-versioned-invalidation` | SV1: sem segredos/labels com ID no diff. BP1: `typecheck`, `lint`, `format:check` verdes. BP4: removido `SCAN`/`deleteByPrefix`, invalidação O(1) por versão de produto e TTLs preservados. BP5: `bun run test` 20/20 (unitários + E2E); sem alteração SQL.                                         |
 | 13/11/2026 | P3   | `fix/price-freshness-window`       | Concluído: SV1 sem segredos/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 integração PostgreSQL 6/6 (`prices.test.ts` inclui filtro de frescor); BP5 `bun run test` 24/24. PostgreSQL de teste descartável parado após a validação.                             |
+| 13/11/2026 | P4   | `fix/ingestion-dlq-feedback`       | Concluído: SV1 sem dados sensíveis/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 migração revisada e integração PostgreSQL 8/8 (inclui FK real); BP5 `bun run test` 33/33. Falhas permanentes vão para `dead`; falhas transitórias preservam retry.             |

@@ -82,5 +82,27 @@ describeIntegration('DrizzleOutboxStore (PostgreSQL)', () => {
     expect(row?.publishedAt?.getTime()).toBe(publishedAt.getTime());
     expect((await store.claimPending(50)).map((event) => event.id)).not.toContain(eventId);
     await expect(store.countPending()).resolves.toBe(backlogBefore - 1);
+    const [publishedRow] = await db
+      .select({ status: outboxEvents.status })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.id, eventId));
+    expect(publishedRow?.status).toBe('published');
+  });
+
+  it('moves an event to dead, excludes it from backlog and counts it', async () => {
+    const eventId = await insertEvent(0);
+    const deadBefore = await store.countDead();
+
+    await expect(store.markDead(eventId, 'Referência inexistente.')).resolves.toBe(true);
+
+    const [deadRow] = await db
+      .select({ status: outboxEvents.status, lastError: outboxEvents.lastError })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.id, eventId));
+    expect(deadRow?.status).toBe('dead');
+    expect(deadRow?.lastError).toBe('Referência inexistente.');
+    expect((await store.claimPending(50)).map((event) => event.id)).not.toContain(eventId);
+    await expect(store.countDead()).resolves.toBe(deadBefore + 1);
+    await expect(store.markDead(eventId, 'Duplicado.')).resolves.toBe(false);
   });
 });
