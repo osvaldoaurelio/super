@@ -43,9 +43,9 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-# Fase V1 — corrigir o que existe
+## Fase V1 — corrigir o que existe
 
-## P1 — Head-of-line blocking no dispatcher da outbox
+### P1 — Head-of-line blocking no dispatcher da outbox
 
 **Arquivos:** `src/infrastructure/queue/outbox-dispatcher.ts`, `src/infrastructure/database/schema.ts`, `src/infrastructure/observability/metrics.ts`
 
@@ -70,7 +70,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P2 — Invalidação de cache via `SCAN` no hot path
+### P2 — Invalidação de cache via `SCAN` no hot path
 
 **Decisão (2.1):** usar bump de versão persistente por produto (`INCR` em `prices:ver:{productId}` e `history:ver:{productId}`). As chaves de versão não expiram: isso evita reutilizar uma versão antiga enquanto ainda houver chaves de dados criadas por uma consulta concorrente. Chaves de dados continuam limitadas pelos TTLs de 60 s / 300 s.
 
@@ -91,7 +91,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P3 — Comparação sem semântica de frescor + `observedAt` no futuro
+### P3 — Comparação sem semântica de frescor + `observedAt` no futuro
 
 **Arquivos:** `src/domain/prices/price.ts`, `src/infrastructure/database/price-repository-drizzle.ts`, `tests/*`
 
@@ -109,7 +109,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P4 — Ingestão sem validação de payload, DLQ e feedback
+### P4 — Ingestão sem validação de payload, DLQ e feedback
 
 **Arquivos:** `src/infrastructure/queue/outbox-dispatcher.ts`, `src/infrastructure/queue/price-worker.ts`, novo `src/infrastructure/queue/price-props-schema.ts`
 
@@ -127,7 +127,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P5 — Over-engineering: outbox → polling → BullMQ
+### P5 — Over-engineering: outbox → polling → BullMQ
 
 **Arquivos:** `src/infrastructure/queue/*`, `src/worker.ts`, `docker-compose.yml`, `README.md`
 
@@ -150,7 +150,7 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-## P6 — Rate limiting configurado mas não implementado
+### P6 — Rate limiting configurado mas não implementado
 
 **Arquivos:** `src/config/env.ts`, `src/http/middleware/` (novo), `src/http/app.ts`, `src/infrastructure/cache/redis-cache.ts`
 
@@ -168,7 +168,7 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-## P8 — Idempotência global por chave única
+### P8 — Idempotência global por chave única
 
 **Arquivos:** `src/infrastructure/database/schema.ts`, migração nova
 
@@ -184,7 +184,7 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-## P11 — Módulo de auth com camadas inconsistentes
+### P11 — Módulo de auth com camadas inconsistentes
 
 **Arquivos:** `src/http/routes/auth.ts`, novos `src/application/use-cases/register-user.ts` / `authenticate-user.ts`, `src/application/ports/user-repository.ts`, `src/infrastructure/database/user-repository-drizzle.ts`
 
@@ -201,7 +201,7 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-## P13 — Drift de migrações e índice fantasma
+### P13 — Drift de migrações e índice fantasma
 
 **Arquivos:** `src/infrastructure/database/schema.ts`, `drizzle/*`
 
@@ -217,7 +217,7 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-## P14 — `/health/worker` enganoso + `process.env` fora do `env`
+### P14 — `/health/worker` enganoso + `process.env` fora do `env`
 
 **Arquivos:** `src/http/app.ts`, `src/config/env.ts`, `src/infrastructure/queue/price-worker.ts`
 
@@ -234,35 +234,35 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 ---
 
-# Fase V2 — recursos faltantes do produto
+## Fase V2 — recursos faltantes do produto
 
-## P7 — Busca, geo, alertas e cesta ausentes
+### P7 — Busca, geo, alertas e cesta ausentes
 
 **Arquivos:** `src/domain/*`, `src/application/*`, `src/http/routes/*`, `src/infrastructure/database/schema.ts`
 
 Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo próprio (não estender `PriceRepository`).
 
-### P7a — Busca de produtos
+#### P7a — Busca de produtos
 
 - ⬜ 7a.1 Migração: extensão `pg_trgm` ou coluna `tsvector` em `products` + índice (GIN/GiST).
 - ⬜ 7a.2 Porta `ProductSearch` + use-case `SearchProducts` (módulo `application/search`).
 - ⬜ 7a.3 Rota `GET /api/v1/products/search?q=&limit=&cursor=` com schemas Zod/OpenAPI.
 - ⬜ 7a.4 Testes unitários + integração (relevância e limite).
 
-### P7b — Geolocalização de supermercados
+#### P7b — Geolocalização de supermercados
 
 - ⬜ 7b.1 Migração: `lat numeric(9,6)`, `lng numeric(9,6)`, coluna geohash + índice em `stores`.
 - ⬜ 7b.2 Rota `GET /api/v1/stores/nearby?lat=&lng=&radiusKm=` (b-box/geohash prefix; PostGIS só se houver necessidade real).
 - ⬜ 7b.3 Seed com coordenadas realistas; teste de integração.
 
-### P7c — Alertas de preço
+#### P7c — Alertas de preço
 
 - ⬜ 7c.1 Migração: tabela `alerts` (user, produto, preço-alvo, ativo, canal).
 - ⬜ 7c.2 Rota protegida por JWT: CRUD de alertas do usuário (`userId` do token vira autorização real).
 - ⬜ 7c.3 Publicar `PriceRecorded` após `record` no worker; avaliação de regras no worker (não no request path).
 - ⬜ 7c.4 Testes: alerta dispara ao cruzar alvo; alerta inativo não dispara.
 
-### P7d — Comparação de cesta
+#### P7d — Comparação de cesta
 
 - ⬜ 7d.1 Porta de leitura multi-produto (`compareMany`) mantendo acesso a `current_prices` (sem varrer histórico).
 - ⬜ 7d.2 Rota `POST /api/v1/baskets/compare` (lista de produtos + local) com totalização por loja.
@@ -273,7 +273,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P9 — Paginação cursor-based ausente
+### P9 — Paginação cursor-based ausente
 
 **Arquivos:** `src/application/ports/price-repository.ts`, `price-repository-drizzle.ts`, `src/http/routes/prices.ts`
 
@@ -287,7 +287,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P10 — Modelo sem tipo de preço (promo vs regular)
+### P10 — Modelo sem tipo de preço (promo vs regular)
 
 **Arquivos:** `schema.ts`, `price.ts`, migração nova
 
@@ -302,7 +302,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P12 — Métricas de domínio e trace nos jobs
+### P12 — Métricas de domínio e trace nos jobs
 
 **Arquivos:** `src/infrastructure/observability/*`, `src/infrastructure/queue/*`
 
@@ -316,7 +316,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P15 — Detalhes menores
+### P15 — Detalhes menores
 
 - ⬜ 15.1 `main.ts`: injetar a mesma instância de `RedisCache` usada pelas rotas no shutdown (fechar a conexão real).
 - ⬜ 15.2 Separar portas de leitura/escrita (`PriceReader` / `PriceWriter`) quando `compareMany` (P7d) entrar.
@@ -329,7 +329,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-# Fase V3 — escala e maturidade (gatilhos baseados em dados)
+## Fase V3 — escala e maturidade (gatilhos baseados em dados)
 
 | ID   | Item                                                                          | Gatilho sugerido                                      | Status     |
 | ---- | ----------------------------------------------------------------------------- | ----------------------------------------------------- | ---------- |
@@ -343,11 +343,11 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-# Skills de validação
+## Skills de validação
 
 Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Rode os comandos indicados.
 
-## SV1 — Segurança geral (obrigatório em todo item que toca HTTP, auth, filas ou dados)
+### SV1 — Segurança geral (obrigatório em todo item que toca HTTP, auth, filas ou dados)
 
 - ⬜ Nenhum `process.env` fora de `src/config/env.ts` → `grep -rn "process.env" src/` retorna só `env.ts`.
 - ⬜ Nenhum segredo, hash, token ou stack trace em respostas/logs → revisar o diff e `grep -rn "Authorization\|passwordHash\|JWT_SECRET" src/` (apenas fluxos internos legítimos).
@@ -357,7 +357,7 @@ Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Ro
 - ⬜ Labels Prometheus sem IDs de produto/loja/usuário (cardinalidade).
 - ⬜ Erros de terceiros traduzidos para envelope `{ error: { code, message } }` — sem vazamento de detalhes internos.
 
-## SV2 — Segurança de autenticação (itens P6, P11, P14, V3-5)
+### SV2 — Segurança de autenticação (itens P6, P11, P14, V3-5)
 
 - ⬜ Rate limit aplicado nas rotas de login/registro; `429` com `Retry-After`.
 - ⬜ Falha de login genérica (`INVALID_CREDENTIALS`) — sem revelar se o e-mail existe.
@@ -365,7 +365,7 @@ Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Ro
 - ⬜ JWT valida `issuer`, `audience` e algoritmo (`algorithms: ['HS256']`); sem `none`/fallback.
 - ⬜ Registro não aceita `userId`/campos de privilégio do cliente.
 
-## SV3 — Validação de dependências e APIs preteridas
+### SV3 — Validação de dependências e APIs preteridas
 
 Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
@@ -380,7 +380,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Nenhum `@deprecated` importado → `grep -rn "@deprecated" node_modules/...` sob demanda ou revisão no diff.
 - ⬜ `bun.lock` atualizado e commitado junto da mudança de dependência.
 
-## BP1 — Código e TypeScript
+### BP1 — Código e TypeScript
 
 - ⬜ `bun run typecheck` sem erro (strict, sem `any`, sem `@ts-ignore`, casts justificados no diff).
 - ⬜ `bun run lint` sem warnings (`--max-warnings 0`).
@@ -389,7 +389,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Direção de dependências respeitada: HTTP → aplicação → domínio; domínio sem Hono/Drizzle/Redis/BullMQ/Pino/env.
 - ⬜ Nenhuma regra de negócio nova na rota HTTP ou no adaptador.
 
-## BP2 — Dados e migrações
+### BP2 — Dados e migrações
 
 - ⬜ `schema.ts` é a única fonte de DDL; `bun run db:generate` seguido de **revisão manual** do SQL e do journal.
 - ⬜ Migração existente nunca reescrita; correção sempre em migração nova.
@@ -398,14 +398,14 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Consulta nova não varre o histórico inteiro; usa `current_prices`/índices e limites.
 - ⬜ `RUN_INTEGRATION=1 bun run test:integration` executado (ou justificar ausência de PostgreSQL).
 
-## BP3 — SOLID / Clean Architecture
+### BP3 — SOLID / Clean Architecture
 
 - ⬜ Caso de uso depende de porta (`application/ports`), não de adaptador concreto.
 - ⬜ Nenhum novo singleton global além dos existentes (`db`, conexões Redis); prefira injeção na composição.
 - ⬜ Sem nova abstração sem uso concreto (nada de factory/evento genérico sem chamador).
 - ⬜ Porta não engordou além do necessário (ISP); se cresceu, considerar split leitura/escrita.
 
-## BP4 — Cache e filas
+### BP4 — Cache e filas
 
 - ⬜ Nenhum `SCAN`/`KEYS` no caminho quente (ingestão ou request path).
 - ⬜ Cache: chave versionada, TTL explícito, invalidação O(1) ou por chave exata.
@@ -413,7 +413,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Jobs idempotentes; entrega at-least-once considerada; mudança incompatível de payload versiona o job/evento.
 - ⬜ Falha de cache/queue não derruba request (best-effort) nem silencia erro (sempre log/contabilize).
 
-## BP5 — Testes e entrega
+### BP5 — Testes e entrega
 
 - ⬜ Regra nova tem teste unitário; SQL novo tem teste de integração; contrato/middleware novo tem E2E.
 - ⬜ `bun run test` verde (unitários + E2E em memória).
@@ -422,7 +422,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Commit em Conventional Commits (ex.: `fix(queue): unblock outbox head-of-line`); hooks Husky não desativados.
 - ⬜ `docker compose config --quiet` se o Compose foi alterado.
 
-## BP6 — Observabilidade
+### BP6 — Observabilidade
 
 - ⬜ Nova rota/caminho emite log `http_request` com `requestId`; erros logados com `err` sem segredos.
 - ⬜ Métricas novas de baixa cardinalidade (sem IDs).
@@ -431,7 +431,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
 ---
 
-## Registro de execução
+### Registro de execução
 
 | Data       | Item | PR/Branch                          | Resultado da validação                                                                                                                                                                                                                                                                              |
 | ---------- | ---- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
