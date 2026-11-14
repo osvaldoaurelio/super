@@ -27,6 +27,10 @@ const registerRoute = createRoute({
       description: 'E-mail já cadastrado.',
       content: { 'application/json': { schema: ErrorResponse } },
     },
+    429: {
+      description: 'Limite de requisições excedido.',
+      content: { 'application/json': { schema: ErrorResponse } },
+    },
   },
 });
 const loginRoute = createRoute({
@@ -38,6 +42,10 @@ const loginRoute = createRoute({
     200: { description: 'Autenticado.', content: { 'application/json': { schema: AuthResponse } } },
     401: {
       description: 'Credenciais inválidas.',
+      content: { 'application/json': { schema: ErrorResponse } },
+    },
+    429: {
+      description: 'Limite de requisições excedido.',
       content: { 'application/json': { schema: ErrorResponse } },
     },
   },

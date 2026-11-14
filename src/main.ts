@@ -6,7 +6,15 @@ import { closeDatabase } from './infrastructure/database/client.ts';
 import { RedisCache } from './infrastructure/cache/redis-cache.ts';
 
 startTracing();
-const server = Bun.serve({ fetch: createApp().fetch, port: env.PORT, hostname: '0.0.0.0' });
+const app = createApp();
+const server = Bun.serve({
+  fetch: (request, server) => {
+    const clientIp = server.requestIP(request)?.address;
+    return app.fetch(request, clientIp ? { clientIp } : {});
+  },
+  port: env.PORT,
+  hostname: '0.0.0.0',
+});
 logger.info({ port: server.port }, 'server_started');
 let shuttingDown = false;
 const shutdown = async (signal: string) => {

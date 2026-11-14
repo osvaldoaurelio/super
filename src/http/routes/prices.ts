@@ -5,6 +5,7 @@ import type { PriceRepository } from '../../application/ports/price-repository.t
 import { ComparePrices } from '../../application/use-cases/compare-prices.ts';
 import { GetPriceHistory } from '../../application/use-cases/get-price-history.ts';
 import { SubmitPrice } from '../../application/use-cases/submit-price.ts';
+import type { MiddlewareHandler } from 'hono';
 import { requireAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
 
@@ -81,40 +82,44 @@ const historyRoute = createRoute({
     },
   },
 });
-const submitRoute = createRoute({
-  method: 'post',
-  path: '',
-  tags: ['Prices'],
-  middleware: [requireAuth],
-  request: {
-    headers: z.object({ 'idempotency-key': z.string().uuid() }),
-    body: { content: { 'application/json': { schema: PriceInput } } },
-  },
-  responses: {
-    202: {
-      description: 'Preço aceito para processamento assíncrono.',
-      content: { 'application/json': { schema: AcceptedResponse } },
-    },
-    401: {
-      description: 'Autenticação necessária.',
-      content: { 'application/json': { schema: ErrorResponse } },
-    },
-    400: {
-      description: 'Dados inválidos.',
-      content: { 'application/json': { schema: ErrorResponse } },
-    },
-  },
-});
-
 export function createPriceRoutes(dependencies: {
   repository: PriceRepository;
   cache: Cache;
   queue: PriceJobQueue;
+  rateLimit: MiddlewareHandler<AppEnv>;
 }) {
   const compare = new ComparePrices(dependencies.repository, dependencies.cache);
   const history = new GetPriceHistory(dependencies.repository, dependencies.cache);
   const submit = new SubmitPrice(dependencies.queue);
   const routes = new OpenAPIHono<AppEnv>();
+  const submitRoute = createRoute({
+    method: 'post',
+    path: '',
+    tags: ['Prices'],
+    middleware: [requireAuth, dependencies.rateLimit],
+    request: {
+      headers: z.object({ 'idempotency-key': z.string().uuid() }),
+      body: { content: { 'application/json': { schema: PriceInput } } },
+    },
+    responses: {
+      202: {
+        description: 'Preço aceito para processamento assíncrono.',
+        content: { 'application/json': { schema: AcceptedResponse } },
+      },
+      401: {
+        description: 'Autenticação necessária.',
+        content: { 'application/json': { schema: ErrorResponse } },
+      },
+      400: {
+        description: 'Dados inválidos.',
+        content: { 'application/json': { schema: ErrorResponse } },
+      },
+      429: {
+        description: 'Limite de requisições excedido.',
+        content: { 'application/json': { schema: ErrorResponse } },
+      },
+    },
+  });
   routes.openapi(compareRoute, async (context) => {
     const { productId } = context.req.valid('param');
     const { city, state } = context.req.valid('query');

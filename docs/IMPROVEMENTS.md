@@ -30,7 +30,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
 | P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído | fix/ingestion-dlq-feedback — 13/11/2026       |
 | P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído | fix/outbox-batch-worker — 13/11/2026          |
-| P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P6  | Rate limiting ausente                                     | 🟠 Alto    | V1   | ✅ Concluído | feat/redis-rate-limiting — 13/11/2026         |
 | P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
 | P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
 | P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
@@ -156,15 +156,17 @@ O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persist
 
 **Objetivo:** proteção real de `auth/*` (credential stuffing, DoS via scrypt) e de `POST /prices`.
 
-- ⬜ 6.1 Criar middleware de janela fixa no Redis de cache (chave `rl:{escopo}:{identificador}`).
-- ⬜ 6.2 Aplicar por IP em `auth/register` e `auth/login`; por `userId`+IP em `POST /prices`.
-- ⬜ 6.3 Usar `env.RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_SECONDS` (config atual passa a viva).
-- ⬜ 6.4 Resposta `429` com envelope de erro padrão e header `Retry-After`.
-- ⬜ 6.5 Falha do Redis ⇒ fail-open (best-effort), logado em `warn`.
-- ⬜ 6.6 Testes E2E: exceder limite retorna 429; Redis off não quebra a rota.
-- ⬜ 6.7 Executar validação (Skills → SV1, SV2, BP1, BP5).
+- [x] 6.1 Criar middleware de janela fixa no Redis de cache (chave `rl:{escopo}:{identificador}`).
+- [x] 6.2 Aplicar por IP em `auth/register` e `auth/login`; por `userId`+IP em `POST /prices`.
+- [x] 6.3 Usar `env.RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_SECONDS` (config atual passa a viva).
+- [x] 6.4 Resposta `429` com envelope de erro padrão e header `Retry-After`.
+- [x] 6.5 Falha do Redis ⇒ fail-open (best-effort), logado em `warn`.
+- [x] 6.6 Testes E2E: exceder limite retorna 429; Redis off não quebra a rota.
+- [x] 6.7 Executar validação (Skills → SV1, SV2, BP1, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — PR/Data: `feat/redis-rate-limiting` — 13/11/2026
+
+O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas por endpoint e identidade. O IP vem do socket Bun (não de `X-Forwarded-For`); se Redis falhar, o middleware registra `warn` e permite a requisição. Os testes cobrem limites, isolamento por IP/usuário, `Retry-After`, contrato OpenAPI e falha do contador.
 
 ---
 
@@ -439,3 +441,4 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 | 13/11/2026 | P2   | `fix/cache-versioned-invalidation` | SV1: sem segredos/labels com ID no diff. BP1: `typecheck`, `lint`, `format:check` verdes. BP4: removido `SCAN`/`deleteByPrefix`, invalidação O(1) por versão de produto e TTLs preservados. BP5: `bun run test` 20/20 (unitários + E2E); sem alteração SQL.                                         |
 | 13/11/2026 | P3   | `fix/price-freshness-window`       | Concluído: SV1 sem segredos/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 integração PostgreSQL 6/6 (`prices.test.ts` inclui filtro de frescor); BP5 `bun run test` 24/24. PostgreSQL de teste descartável parado após a validação.                             |
 | 13/11/2026 | P4   | `fix/ingestion-dlq-feedback`       | Concluído: SV1 sem dados sensíveis/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 migração revisada e integração PostgreSQL 8/8 (inclui FK real); BP5 `bun run test` 33/33. Falhas permanentes vão para `dead`; falhas transitórias preservam retry.             |
+| 13/11/2026 | P6   | `feat/redis-rate-limiting`         | SV1/SV2 sem IPs ou user IDs em labels/logs; BP1 e BP5 válidos; 29/29 testes. E2E cobre 429, `Retry-After`, identidade e fail-open; Redis Lua e indisponibilidade validados.                                                                                                                         |

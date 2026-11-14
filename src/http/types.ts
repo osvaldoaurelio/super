@@ -1,1 +1,4 @@
-export type AppEnv = { Variables: { requestId: string; userId: string } };
+export type AppEnv = {
+  Bindings: { clientIp?: string };
+  Variables: { requestId: string; userId: string };
+};
