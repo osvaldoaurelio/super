@@ -1,6 +1,6 @@
 # Super API — comparação de preços de supermercados
 
-Base inicial de API REST em **Bun + TypeScript strict + Hono + PostgreSQL/Drizzle + Redis/BullMQ**. O desenho é um monólito modular: um deploy simples agora, com limites claros para separar processos ou módulos quando a carga justificar.
+Base inicial de API REST em **Bun + TypeScript strict + Hono + PostgreSQL/Drizzle + Redis**. O desenho é um monólito modular: um deploy simples agora, com limites claros para separar processos ou módulos quando a carga justificar.
 
 ## Executar localmente
 
@@ -14,7 +14,7 @@ docker compose up --build
 
 API (localhost): <http://localhost:3000>; Swagger: <http://localhost:3000/docs>; OpenAPI: <http://localhost:3000/openapi.json>; Prometheus: <http://localhost:9090>; Grafana: <http://localhost:3001> (dev: admin / change-this-in-production). PostgreSQL/Redis ficam apenas na rede interna do Compose; para testes locais fora dos containers, habilite o mapeamento de portas manualmente.
 
-O Compose inicia API, worker, PostgreSQL, Redis de cache, Redis persistente de filas e Prometheus/Grafana. Os containers e credenciais padrão são **somente para desenvolvimento**; não exponha as portas de observabilidade, não use as senhas padrão e injete segredos por secret manager em produção. O Collector OTLP é iniciado no Compose local e API/worker exportam para `http://otel-collector:4318/v1/traces` por padrão; altere `OTEL_EXPORTER_OTLP_ENDPOINT` se necessário. Para um deploy que não use Collector, deixe essa variável vazia para desabilitar tracing.
+O Compose inicia API, worker, PostgreSQL, Redis de cache e Prometheus/Grafana. Os containers e credenciais padrão são **somente para desenvolvimento**; não exponha as portas de observabilidade, não use as senhas padrão e injete segredos por secret manager em produção. O Collector OTLP é iniciado no Compose local e API/worker exportam para `http://otel-collector:4318/v1/traces` por padrão; altere `OTEL_EXPORTER_OTLP_ENDPOINT` se necessário. Para um deploy que não use Collector, deixe essa variável vazia para desabilitar tracing.
 
 Se `METRICS_TOKEN` estiver configurado, o scrape exige `Authorization: Bearer <token>`; configure o mesmo segredo no Prometheus para ambientes não isolados.
 
@@ -53,7 +53,7 @@ src/
 │   ├── cache/                      # Adaptador Redis
 │   ├── database/                   # Schema Drizzle, cliente e repositório
 │   ├── observability/              # Pino, OTel, Prometheus
-│   └── queue/                      # BullMQ, worker e dispatcher outbox
+│   └── queue/                      # Consumidor em lote da outbox
 ├── main.ts                         # Inicialização HTTP
 └── worker.ts                       # Processo de ingestão independente
 drizzle/                            # SQL inicial e artefatos Drizzle
@@ -75,9 +75,7 @@ flowchart LR
   Ports --> Queue[Porta de submissão]
   Repo --> PG[(PostgreSQL)]
   Queue --> Outbox[(Outbox transacional)]
-  Outbox --> Dispatcher[Worker dispatcher]
-  Dispatcher --> Bull[BullMQ / Redis persistente]
-  Bull --> Consumer[Worker de preços]
+  Outbox --> Consumer[Worker em lote]
   Consumer --> Repo
   Consumer --> Cache
   Hono -. métricas/traces/logs .-> Obs[Prometheus / OTel / Pino]
@@ -110,27 +108,28 @@ Content-Type: application/json
 - **stores**: cadeia e localização; índice `(state, city)`.
 - **current_prices**: uma linha por `(product_id, store_id)`; índice `(product_id, price_cents)` para comparação ordenada e índice de unicidade do par.
 - **price_history**: observações imutáveis, centavos, origem e data; PK composta `(observed_at, id)`, índices `(product_id, observed_at)` e `(store_id, observed_at)`.
-- **outbox_events**: evento JSON, chave de idempotência única e estado (`pending`, `published` ou `dead`); `attempts` e `last_error` registram falhas de publicação e a DLQ guarda falhas permanentes.
+- **outbox_events**: evento JSON, chave de idempotência única e estado (`pending`, `processed` ou `dead`); `attempts` e `last_error` registram falhas de processamento e a DLQ guarda falhas permanentes.
 
-Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual; comparações só retornam preços observados nos últimos 30 dias. A ingestão rejeita observações com mais de 5 minutos no futuro ou mais de 365 dias. A outbox fecha a janela de falha entre confirmar um request no PostgreSQL e publicar no Redis; o worker é idempotente e o dispatcher pode repetir entregas.
+Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual; comparações só retornam preços observados nos últimos 30 dias. A ingestão rejeita observações com mais de 5 minutos no futuro ou mais de 365 dias. A outbox e a gravação do histórico compartilham o PostgreSQL; o worker processa até 200 eventos por transação com `FOR UPDATE SKIP LOCKED`, e a chave idempotente protege contra reprocessamento.
 
 ## Decisões e escalabilidade
 
 1. **Monólito modular, não microserviços:** um domínio e um deploy fáceis de operar no MVP; portas explícitas deixam banco, cache e fila substituíveis. API e worker já escalam separadamente.
-2. **Clean Architecture / SOLID:** domínio sem framework; casos de uso dependem de interfaces; Drizzle/Redis/BullMQ são adaptadores. Hono faz parsing, validação e tradução HTTP. Mantenha a composição de dependências na borda ao ampliar módulos.
+2. **Clean Architecture / SOLID:** domínio sem framework; casos de uso dependem de interfaces; Drizzle/Redis são adaptadores. Hono faz parsing, validação e tradução HTTP. Mantenha a composição de dependências na borda ao ampliar módulos.
 3. **DDD leve:** `Price` contém as invariantes que realmente importam (preço positivo em centavos, data e identificadores válidos); Product e Store permanecem entidades relacionais simples até surgir comportamento próprio.
 4. **Consulta quente curta:** comparação lê o snapshot `current_prices`, com filtro por produto/local e ordenação apoiada por índice; não varre o histórico. Resposta limitada a 100 ofertas.
 5. **Histórico de milhões de linhas:** índice por produto e data; intervalo de consulta limitado, payload projetado e paginação/limite. Métricas de `EXPLAIN (ANALYZE, BUFFERS)` e volume determinam quando habilitar partições mensais por `observed_at`, retenção/arquivamento e ingestão em lote. Planeje a tabela particionada e unicidade local conscientemente: no PostgreSQL, índices únicos de tabelas particionadas normalmente precisam incluir a chave de partição; mantenha deduplicação global na outbox ou adote tabela de idempotência dedicada antes dessa migração.
-6. **Redis de cache independente do Redis de fila:** cache usa `allkeys-lru` sem persistência; fila usa AOF e `noeviction`, pois expulsar chaves BullMQ corromperia o estado do job. Cache é best-effort, curto (60 s comparação, 300 s histórico), namespaced/versionado e invalidado após persistência. TTL limita inconsistências se invalidação falhar.
-7. **Fila/outbox:** payload validado com Zod antes de enfileirar, tentativas exponenciais, worker concorrente e idempotência. Falhas permanentes (payload/regra inválidos ou FK inexistente) são marcadas `dead`, sem retry automático. Falhas transitórias ao publicar na fila são repetidas pelo dispatcher usando `attempts` da outbox; depois que o job entra no BullMQ, falhas transitórias do worker usam as tentativas do próprio BullMQ. `outbox_dead_events` e `outbox_dead_lettered_total` expõem a DLQ; `outbox_backlog_events` e `outbox_dispatch_failures_total` acompanham publicação e falhas. Jobs falhos retidos no BullMQ devem ser removidos antes de rearmar manualmente a linha correspondente: corrija a causa, remova o job falho com o mesmo ID se existir e, com autorização operacional, atualize a linha `dead` para `pending`, limpe `published_at`, `attempts` e `last_error`. Exemplo:
+6. **Cache Redis:** cache usa `allkeys-lru` sem persistência. É best-effort, curto (60 s comparação, 300 s histórico), namespaced/versionado e invalidado após persistência. TTL limita inconsistências se invalidação falhar.
+7. **Outbox:** payload validado com Zod pelo worker, processamento em lotes com locks `SKIP LOCKED` e gravação atômica de histórico, snapshot e estado do evento. Falhas permanentes (payload/regra inválidos ou FK inexistente) são marcadas `dead`, sem retry automático. Falhas transitórias incrementam `attempts`; após 10 tentativas o evento permanece pendente para replay operacional. `outbox_dead_events` e `outbox_dead_lettered_total` expõem a DLQ; `outbox_backlog_events` e `outbox_processing_failures_total` acompanham backlog e falhas. Para replay manual, corrija a causa e, com autorização operacional, reative o evento:
 
    ```sql
    UPDATE outbox_events
-   SET status = 'pending', published_at = NULL, attempts = 0, last_error = NULL
-   WHERE id = '<event-uuid>' AND status = 'dead';
+   SET status = 'pending', processed_at = NULL, attempts = 0, last_error = NULL
+   WHERE id = '<event-uuid>'
+     AND (status = 'dead' OR (status = 'pending' AND attempts >= 10));
    ```
 
-   Redis de fila precisa persistência, monitoramento, backup/teste de recuperação e política de jobs falhos antes da produção. A entrega é at-least-once.
+   O PostgreSQL é a fonte durável da fila e a entrega é at-least-once.
 
 8. **Auth:** token JWT curto HS256 com emissor/audiência validados; segredo mínimo de 32 caracteres fora do código. Senha usa scrypt e comparação em tempo constante. Em produção, preferir chaves assimétricas/rotação, refresh revogável, rate limiting e controles de abuso.
 9. **Observabilidade:** Pino JSON remove autorização/senhas; request-id correlaciona logs; OTel exporta traces OTLP quando configurado; Prometheus expõe séries de baixa cardinalidade (sem IDs individuais). Collector de exemplo exporta traces no log/debug, suficiente localmente — substitua por backend durável.
@@ -138,13 +137,13 @@ Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma 
 
 ## Testes
 
-- Unitários: invariantes de `Price`, schema de payload da fila, tratamento de falha permanente/transitória, cache-hit/miss, JWT/hash de senha e dispatcher da outbox (evento envenenado, tentativas e DLQ).
-- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot/histórico, frescor, rejeição de FK na ingestão e estados/contagens da outbox; CI provisiona Postgres e Redis.
+- Unitários: invariantes de `Price`, schema de payload, cache-hit/miss, JWT/hash de senha e comportamento HTTP.
+- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot/histórico, frescor, rejeição de FK, processamento em batch e idempotência da outbox; CI provisiona Postgres.
 - E2E: percorre a aplicação HTTP Hono por `app.request` sem abrir socket, validando OpenAPI, validação e proteção JWT. Para testes de socket/infra ponta a ponta, iniciar o Compose e exercitar o endpoint publicado num job de release.
 
 ## Roadmap
 
-- **MVP:** catálogo/lojas por seed e gestão autenticada, comparação, histórico, ingestão outbox/BullMQ, JWT, cache, métricas e deploy Compose; contratos atuais implementam o núcleo de preços e cadastro/autenticação inicial.
+- **MVP:** catálogo/lojas por seed e gestão autenticada, comparação, histórico, ingestão via outbox PostgreSQL, JWT, cache, métricas e deploy Compose; contratos atuais implementam o núcleo de preços e cadastro/autenticação inicial.
 - **V2:** APIs administrativas completas para catálogo/lojas, fontes de preço com importação bulk e dead-letter/replay, busca textual (trigram/FTS), paginação por cursor, alertas/listas de compras, refresh token e rate limiting; avaliar partição mensal, read replicas e CDN conforme telemetria.
 - **V3:** múltiplas regiões/tenants, eventos de domínio para integrações, analytics/OLAP separado, previsão/qualidade de preços, políticas de retenção/arquivamento e particionamento distribuído só se o crescimento comprovado exigir.
 

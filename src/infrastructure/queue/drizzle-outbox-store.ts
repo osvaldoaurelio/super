@@ -1,12 +1,11 @@
-import { and, asc, eq, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, lt, sql } from 'drizzle-orm';
 import {
   OUTBOX_LAST_ERROR_MAX_LENGTH,
   OUTBOX_MAX_ATTEMPTS,
   type OutboxEvent,
   type OutboxFailureOutcome,
-  type OutboxStore,
-} from '../../application/ports/outbox-store.ts';
-import { db } from '../database/client.ts';
+} from './outbox-types.ts';
+import { db, type DatabaseTransaction } from '../database/client.ts';
 import { outboxEvents } from '../database/schema.ts';
 
 function truncateError(error: string): string {
@@ -15,9 +14,9 @@ function truncateError(error: string): string {
     : error;
 }
 
-export class DrizzleOutboxStore implements OutboxStore {
-  async claimPending(limit: number): Promise<OutboxEvent[]> {
-    return db
+export class DrizzleOutboxStore {
+  async claimPending(tx: DatabaseTransaction, limit: number): Promise<OutboxEvent[]> {
+    return tx
       .select({
         id: outboxEvents.id,
         type: outboxEvents.type,
@@ -26,31 +25,26 @@ export class DrizzleOutboxStore implements OutboxStore {
       })
       .from(outboxEvents)
       .where(
-        and(
-          eq(outboxEvents.status, 'pending'),
-          isNull(outboxEvents.publishedAt),
-          lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS),
-        ),
+        and(eq(outboxEvents.status, 'pending'), lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS)),
       )
       .orderBy(asc(outboxEvents.createdAt))
-      .limit(limit);
+      .limit(limit)
+      .for('update', { skipLocked: true });
   }
 
-  async markPublished(eventId: string, publishedAt: Date): Promise<void> {
-    await db
+  async markProcessed(tx: DatabaseTransaction, eventId: string, processedAt: Date): Promise<void> {
+    await tx
       .update(outboxEvents)
-      .set({ publishedAt, status: 'published' })
-      .where(
-        and(
-          eq(outboxEvents.id, eventId),
-          eq(outboxEvents.status, 'pending'),
-          isNull(outboxEvents.publishedAt),
-        ),
-      );
+      .set({ processedAt, status: 'processed' })
+      .where(and(eq(outboxEvents.id, eventId), eq(outboxEvents.status, 'pending')));
   }
 
-  async markFailed(eventId: string, error: string): Promise<OutboxFailureOutcome> {
-    const [row] = await db
+  async markFailed(
+    tx: DatabaseTransaction,
+    eventId: string,
+    error: string,
+  ): Promise<OutboxFailureOutcome> {
+    const [row] = await tx
       .update(outboxEvents)
       .set({
         attempts: sql`${outboxEvents.attempts} + 1`,
@@ -62,11 +56,11 @@ export class DrizzleOutboxStore implements OutboxStore {
     return attempts >= OUTBOX_MAX_ATTEMPTS ? 'exhausted' : 'retry';
   }
 
-  async markDead(eventId: string, error: string): Promise<boolean> {
-    const [row] = await db
+  async markDead(tx: DatabaseTransaction, eventId: string, error: string): Promise<boolean> {
+    const [row] = await tx
       .update(outboxEvents)
       .set({ status: 'dead', lastError: truncateError(error) })
-      .where(and(eq(outboxEvents.id, eventId), ne(outboxEvents.status, 'dead')))
+      .where(and(eq(outboxEvents.id, eventId), eq(outboxEvents.status, 'pending')))
       .returning({ id: outboxEvents.id });
     return row !== undefined;
   }

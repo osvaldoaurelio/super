@@ -10,6 +10,7 @@ export const sqlClient = postgres(env.DATABASE_URL, {
   connect_timeout: 10,
 });
 export const db = drizzle(sqlClient, { schema });
+export type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 let closed = false;
 export async function closeDatabase(): Promise<void> {
   if (closed) return;

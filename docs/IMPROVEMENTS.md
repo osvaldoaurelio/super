@@ -29,7 +29,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
 | P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
 | P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído | fix/ingestion-dlq-feedback — 13/11/2026       |
-| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído | fix/outbox-batch-worker — 13/11/2026          |
 | P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
 | P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
@@ -133,16 +133,20 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 **Objetivo:** um único hop de ingestão. Decidir entre (a) consumir outbox direto no worker em batch (remover BullMQ por ora) ou (b) manter BullMQ e remover a outbox.
 
-- ⬜ 5.1 Registrar decisão e justificativa neste arquivo.
-- ⬜ 5.2 **Se (a):** worker processa outbox em batch (`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 200`) e grava `price_history`/`current_prices` na mesma transação.
-- ⬜ 5.3 **Se (a):** remover dependência de BullMQ (`package.json`, compose, portas) e manter idempotência por `(source, idempotency_key)` — ver P8.
-- ⬜ 5.4 **Se (b):** `POST /prices` grava direto no histórico (idempotente) e enfileira direto no BullMQ.
-- ⬜ 5.5 Ajustar `worker.ts` e shutdown para o desenho escolhido.
-- ⬜ 5.6 Testes de integração cobrindo batch e idempotência na repetição de entrega.
-- ⬜ 5.7 Atualizar diagrama e README (seção "Fila/outbox").
-- ⬜ 5.8 Executar validação (Skills → SV1, BP1, BP4, BP5).
+**Decisão (5.1):** adotar (a): manter a outbox transacional e consumi-la diretamente pelo worker em lotes. Isso preserva a confirmação durável do `POST /prices` no PostgreSQL e a idempotência já implementada, removendo o salto de publicação BullMQ/Redis e a necessidade de manter o Redis de fila. Falhas e replay continuam observáveis pela outbox/DLQ.
 
-**Status:** ⬜ A fazer — PR/Data: —
+- [x] 5.1 Registrar decisão e justificativa neste arquivo.
+- [x] 5.2 **Se (a):** worker processa outbox em batch (`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 200`) e grava `price_history`/`current_prices` na mesma transação.
+- [x] 5.3 **Se (a):** remover dependência de BullMQ (`package.json`, compose, portas) e preservar idempotência por chave — ver P8 para unicidade composta por fonte.
+- [n/a] 5.4 **Se (b):** alternativa não escolhida.
+- [x] 5.5 Ajustar `worker.ts` e shutdown para o desenho escolhido.
+- [x] 5.6 Testes de integração cobrindo batch e idempotência na repetição de entrega.
+- [x] 5.7 Atualizar diagrama e README (seção "Fila/outbox").
+- [x] 5.8 Executar validação (Skills → SV1, BP1, BP4, BP5).
+
+**Status:** ✅ Concluído — PR/Data: `fix/outbox-batch-worker` — 13/11/2026
+
+O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persiste preço e marcação `processed` atomicamente, isolando cada evento com savepoint. Erros permanentes vão para `dead`; transitórios incrementam tentativas e recebem pausa antes do retry. A migração `0003_outbox_batch_processing` reativa eventos legados não mortos com tentativas zeradas e atualiza estado, timestamp e índice. BullMQ e Redis de fila foram removidos; os testes de integração cobrem DLQ, retry, replay idempotente e o limite de lote.
 
 ---
 
@@ -172,7 +176,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 - ⬜ 8.1 Criar migração: trocar `price_history.idempotency_key UNIQUE` por `UNIQUE (source, idempotency_key)` (dropar índice global antigo).
 - ⬜ 8.2 Idem para `outbox_events.idempotency_key` → `UNIQUE (type, idempotency_key)`.
-- ⬜ 8.3 Revisar `onConflictDoNothing` no repositório/dispatcher para o novo alvo de conflito.
+- ⬜ 8.3 Revisar `onConflictDoNothing` no repositório/consumer da outbox para o novo alvo de conflito.
 - ⬜ 8.4 Teste de integração: mesma chave de fontes diferentes ⇒ ambas as observações gravadas.
 - ⬜ 8.5 Executar validação (Skills → BP2, BP5, SV3).
 
@@ -302,9 +306,9 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 **Arquivos:** `src/infrastructure/observability/*`, `src/infrastructure/queue/*`
 
-- ⬜ 12.1 Gauges: `outbox_backlog_events` (se ainda não existir via P1), `price_ingestion_lag_seconds` (`now() - published_at`), `price_served_age_seconds` (idade dos preços em `compare`).
-- ⬜ 12.2 Propagar `traceparent` no payload do job (BullMQ/outbox) e `trace.extract` no worker.
-- ⬜ 12.3 Painel Grafana: backlog, lag de ingestão, idade de preços, profundidade da fila.
+- ⬜ 12.1 Gauges: `outbox_backlog_events` (se ainda não existir via P1), `price_ingestion_lag_seconds` (idade do evento pendente desde `created_at`), `price_served_age_seconds` (idade dos preços em `compare`).
+- ⬜ 12.2 Propagar `traceparent` no payload da outbox e `trace.extract` no worker.
+- ⬜ 12.3 Painel Grafana: backlog, lag de ingestão e idade de preços.
 - ⬜ 12.4 Alertas Prometheus: backlog crescente por N minutos; lag acima de X.
 - ⬜ 12.5 Executar validação (Skills → BP6).
 

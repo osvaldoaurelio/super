@@ -5,7 +5,7 @@ import { outboxEvents } from '../../src/infrastructure/database/schema.ts';
 import {
   OUTBOX_LAST_ERROR_MAX_LENGTH,
   OUTBOX_MAX_ATTEMPTS,
-} from '../../src/application/ports/outbox-store.ts';
+} from '../../src/infrastructure/queue/outbox-types.ts';
 import { DrizzleOutboxStore } from '../../src/infrastructure/queue/drizzle-outbox-store.ts';
 import { runIntegrationSetup } from '../support/integration-setup.ts';
 
@@ -45,7 +45,7 @@ describeIntegration('DrizzleOutboxStore (PostgreSQL)', () => {
     const healthyId = await insertEvent(0);
     const exhaustedId = await insertEvent(OUTBOX_MAX_ATTEMPTS);
 
-    const ids = (await store.claimPending(50)).map((event) => event.id);
+    const ids = (await db.transaction((tx) => store.claimPending(tx, 50))).map((event) => event.id);
 
     expect(ids).toContain(healthyId);
     expect(ids).not.toContain(exhaustedId);
@@ -55,7 +55,9 @@ describeIntegration('DrizzleOutboxStore (PostgreSQL)', () => {
     const eventId = await insertEvent(OUTBOX_MAX_ATTEMPTS - 1);
     const longError = 'e'.repeat(OUTBOX_LAST_ERROR_MAX_LENGTH + 100);
 
-    await expect(store.markFailed(eventId, longError)).resolves.toBe('exhausted');
+    await expect(db.transaction((tx) => store.markFailed(tx, eventId, longError))).resolves.toBe(
+      'exhausted',
+    );
 
     const [row] = await db
       .select({ attempts: outboxEvents.attempts, lastError: outboxEvents.lastError })
@@ -64,36 +66,40 @@ describeIntegration('DrizzleOutboxStore (PostgreSQL)', () => {
     expect(row?.attempts).toBe(OUTBOX_MAX_ATTEMPTS);
     expect(row?.lastError).toBe(longError.slice(0, OUTBOX_LAST_ERROR_MAX_LENGTH));
 
-    const ids = (await store.claimPending(50)).map((event) => event.id);
+    const ids = (await db.transaction((tx) => store.claimPending(tx, 50))).map((event) => event.id);
     expect(ids).not.toContain(eventId);
   });
 
-  it('marca como publicado, remove do backlog e conta pendentes', async () => {
+  it('marca como processado, remove do backlog e conta pendentes', async () => {
     const eventId = await insertEvent(0);
-    const publishedAt = new Date();
+    const processedAt = new Date();
     const backlogBefore = await store.countPending();
 
-    await store.markPublished(eventId, publishedAt);
+    await db.transaction((tx) => store.markProcessed(tx, eventId, processedAt));
 
     const [row] = await db
-      .select({ publishedAt: outboxEvents.publishedAt })
+      .select({ processedAt: outboxEvents.processedAt })
       .from(outboxEvents)
       .where(eq(outboxEvents.id, eventId));
-    expect(row?.publishedAt?.getTime()).toBe(publishedAt.getTime());
-    expect((await store.claimPending(50)).map((event) => event.id)).not.toContain(eventId);
+    expect(row?.processedAt?.getTime()).toBe(processedAt.getTime());
+    expect(
+      (await db.transaction((tx) => store.claimPending(tx, 50))).map((event) => event.id),
+    ).not.toContain(eventId);
     await expect(store.countPending()).resolves.toBe(backlogBefore - 1);
-    const [publishedRow] = await db
+    const [processedRow] = await db
       .select({ status: outboxEvents.status })
       .from(outboxEvents)
       .where(eq(outboxEvents.id, eventId));
-    expect(publishedRow?.status).toBe('published');
+    expect(processedRow?.status).toBe('processed');
   });
 
   it('moves an event to dead, excludes it from backlog and counts it', async () => {
     const eventId = await insertEvent(0);
     const deadBefore = await store.countDead();
 
-    await expect(store.markDead(eventId, 'Referência inexistente.')).resolves.toBe(true);
+    await expect(
+      db.transaction((tx) => store.markDead(tx, eventId, 'Referência inexistente.')),
+    ).resolves.toBe(true);
 
     const [deadRow] = await db
       .select({ status: outboxEvents.status, lastError: outboxEvents.lastError })
@@ -101,8 +107,12 @@ describeIntegration('DrizzleOutboxStore (PostgreSQL)', () => {
       .where(eq(outboxEvents.id, eventId));
     expect(deadRow?.status).toBe('dead');
     expect(deadRow?.lastError).toBe('Referência inexistente.');
-    expect((await store.claimPending(50)).map((event) => event.id)).not.toContain(eventId);
+    expect(
+      (await db.transaction((tx) => store.claimPending(tx, 50))).map((event) => event.id),
+    ).not.toContain(eventId);
     await expect(store.countDead()).resolves.toBe(deadBefore + 1);
-    await expect(store.markDead(eventId, 'Duplicado.')).resolves.toBe(false);
+    await expect(db.transaction((tx) => store.markDead(tx, eventId, 'Duplicado.'))).resolves.toBe(
+      false,
+    );
   });
 });
