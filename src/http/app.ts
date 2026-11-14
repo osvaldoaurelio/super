@@ -12,7 +12,7 @@ import { authRoutes } from './routes/auth.ts';
 import { createPriceRoutes } from './routes/prices.ts';
 import { DrizzlePriceRepository } from '../infrastructure/database/price-repository-drizzle.ts';
 import { RedisCache } from '../infrastructure/cache/redis-cache.ts';
-import { BullPriceQueue } from '../infrastructure/queue/price-queue.ts';
+import { OutboxPriceQueue } from '../infrastructure/queue/outbox-price-queue.ts';
 import { DomainError } from '../domain/errors.ts';
 import type { AppEnv } from './types.ts';
 
@@ -74,10 +74,8 @@ export function createApp() {
   app.get('/health/live', (context) => context.json({ status: 'ok' }));
   app.get('/health/worker', async (context) => {
     try {
-      const { getQueueRedis } = await import('../infrastructure/queue/price-queue.ts');
-      const connection = getQueueRedis();
-      if (connection.status === 'wait') await connection.connect();
-      await connection.ping();
+      const { sqlClient } = await import('../infrastructure/database/client.ts');
+      await sqlClient`select 1`;
       return context.json({ status: 'ok' });
     } catch {
       return context.json({ status: 'error' }, 503);
@@ -121,7 +119,7 @@ export function createApp() {
     createPriceRoutes({
       repository: new DrizzlePriceRepository(),
       cache: new RedisCache(),
-      queue: new BullPriceQueue(),
+      queue: new OutboxPriceQueue(),
     }),
   );
   app.doc('/openapi.json', {

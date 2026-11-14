@@ -29,7 +29,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
 | P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
 | P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído | fix/ingestion-dlq-feedback — 13/11/2026       |
-| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
+| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído | fix/outbox-batch-worker — 13/11/2026          |
 | P6  | Rate limiting configurado mas não implementado            | 🟠 Alto    | V1   | ⬜ A fazer   | —                                             |
 | P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
 | P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
@@ -43,9 +43,9 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-# Fase V1 — corrigir o que existe
+## Fase V1 — corrigir o que existe
 
-## P1 — Head-of-line blocking no dispatcher da outbox
+### P1 — Head-of-line blocking no dispatcher da outbox
 
 **Arquivos:** `src/infrastructure/queue/outbox-dispatcher.ts`, `src/infrastructure/database/schema.ts`, `src/infrastructure/observability/metrics.ts`
 
@@ -70,7 +70,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P2 — Invalidação de cache via `SCAN` no hot path
+### P2 — Invalidação de cache via `SCAN` no hot path
 
 **Decisão (2.1):** usar bump de versão persistente por produto (`INCR` em `prices:ver:{productId}` e `history:ver:{productId}`). As chaves de versão não expiram: isso evita reutilizar uma versão antiga enquanto ainda houver chaves de dados criadas por uma consulta concorrente. Chaves de dados continuam limitadas pelos TTLs de 60 s / 300 s.
 
@@ -91,7 +91,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P3 — Comparação sem semântica de frescor + `observedAt` no futuro
+### P3 — Comparação sem semântica de frescor + `observedAt` no futuro
 
 **Arquivos:** `src/domain/prices/price.ts`, `src/infrastructure/database/price-repository-drizzle.ts`, `tests/*`
 
@@ -109,7 +109,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P4 — Ingestão sem validação de payload, DLQ e feedback
+### P4 — Ingestão sem validação de payload, DLQ e feedback
 
 **Arquivos:** `src/infrastructure/queue/outbox-dispatcher.ts`, `src/infrastructure/queue/price-worker.ts`, novo `src/infrastructure/queue/price-props-schema.ts`
 
@@ -127,26 +127,30 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P5 — Over-engineering: outbox → polling → BullMQ
+### P5 — Over-engineering: outbox → polling → BullMQ
 
 **Arquivos:** `src/infrastructure/queue/*`, `src/worker.ts`, `docker-compose.yml`, `README.md`
 
 **Objetivo:** um único hop de ingestão. Decidir entre (a) consumir outbox direto no worker em batch (remover BullMQ por ora) ou (b) manter BullMQ e remover a outbox.
 
-- ⬜ 5.1 Registrar decisão e justificativa neste arquivo.
-- ⬜ 5.2 **Se (a):** worker processa outbox em batch (`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 200`) e grava `price_history`/`current_prices` na mesma transação.
-- ⬜ 5.3 **Se (a):** remover dependência de BullMQ (`package.json`, compose, portas) e manter idempotência por `(source, idempotency_key)` — ver P8.
-- ⬜ 5.4 **Se (b):** `POST /prices` grava direto no histórico (idempotente) e enfileira direto no BullMQ.
-- ⬜ 5.5 Ajustar `worker.ts` e shutdown para o desenho escolhido.
-- ⬜ 5.6 Testes de integração cobrindo batch e idempotência na repetição de entrega.
-- ⬜ 5.7 Atualizar diagrama e README (seção "Fila/outbox").
-- ⬜ 5.8 Executar validação (Skills → SV1, BP1, BP4, BP5).
+**Decisão (5.1):** adotar (a): manter a outbox transacional e consumi-la diretamente pelo worker em lotes. Isso preserva a confirmação durável do `POST /prices` no PostgreSQL e a idempotência já implementada, removendo o salto de publicação BullMQ/Redis e a necessidade de manter o Redis de fila. Falhas e replay continuam observáveis pela outbox/DLQ.
 
-**Status:** ⬜ A fazer — PR/Data: —
+- [x] 5.1 Registrar decisão e justificativa neste arquivo.
+- [x] 5.2 **Se (a):** worker processa outbox em batch (`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 200`) e grava `price_history`/`current_prices` na mesma transação.
+- [x] 5.3 **Se (a):** remover dependência de BullMQ (`package.json`, compose, portas) e preservar idempotência por chave — ver P8 para unicidade composta por fonte.
+- [n/a] 5.4 **Se (b):** alternativa não escolhida.
+- [x] 5.5 Ajustar `worker.ts` e shutdown para o desenho escolhido.
+- [x] 5.6 Testes de integração cobrindo batch e idempotência na repetição de entrega.
+- [x] 5.7 Atualizar diagrama e README (seção "Fila/outbox").
+- [x] 5.8 Executar validação (Skills → SV1, BP1, BP4, BP5).
+
+**Status:** ✅ Concluído — PR/Data: `fix/outbox-batch-worker` — 13/11/2026
+
+O worker agora reivindica até 200 eventos com `FOR UPDATE SKIP LOCKED`, persiste preço e marcação `processed` atomicamente, isolando cada evento com savepoint. Erros permanentes vão para `dead`; transitórios incrementam tentativas e recebem pausa antes do retry. A migração `0003_outbox_batch_processing` reativa eventos legados não mortos com tentativas zeradas e atualiza estado, timestamp e índice. BullMQ e Redis de fila foram removidos; os testes de integração cobrem DLQ, retry, replay idempotente e o limite de lote.
 
 ---
 
-## P6 — Rate limiting configurado mas não implementado
+### P6 — Rate limiting configurado mas não implementado
 
 **Arquivos:** `src/config/env.ts`, `src/http/middleware/` (novo), `src/http/app.ts`, `src/infrastructure/cache/redis-cache.ts`
 
@@ -164,7 +168,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P8 — Idempotência global por chave única
+### P8 — Idempotência global por chave única
 
 **Arquivos:** `src/infrastructure/database/schema.ts`, migração nova
 
@@ -172,7 +176,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 - ⬜ 8.1 Criar migração: trocar `price_history.idempotency_key UNIQUE` por `UNIQUE (source, idempotency_key)` (dropar índice global antigo).
 - ⬜ 8.2 Idem para `outbox_events.idempotency_key` → `UNIQUE (type, idempotency_key)`.
-- ⬜ 8.3 Revisar `onConflictDoNothing` no repositório/dispatcher para o novo alvo de conflito.
+- ⬜ 8.3 Revisar `onConflictDoNothing` no repositório/consumer da outbox para o novo alvo de conflito.
 - ⬜ 8.4 Teste de integração: mesma chave de fontes diferentes ⇒ ambas as observações gravadas.
 - ⬜ 8.5 Executar validação (Skills → BP2, BP5, SV3).
 
@@ -180,7 +184,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P11 — Módulo de auth com camadas inconsistentes
+### P11 — Módulo de auth com camadas inconsistentes
 
 **Arquivos:** `src/http/routes/auth.ts`, novos `src/application/use-cases/register-user.ts` / `authenticate-user.ts`, `src/application/ports/user-repository.ts`, `src/infrastructure/database/user-repository-drizzle.ts`
 
@@ -197,7 +201,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P13 — Drift de migrações e índice fantasma
+### P13 — Drift de migrações e índice fantasma
 
 **Arquivos:** `src/infrastructure/database/schema.ts`, `drizzle/*`
 
@@ -213,7 +217,7 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-## P14 — `/health/worker` enganoso + `process.env` fora do `env`
+### P14 — `/health/worker` enganoso + `process.env` fora do `env`
 
 **Arquivos:** `src/http/app.ts`, `src/config/env.ts`, `src/infrastructure/queue/price-worker.ts`
 
@@ -230,35 +234,35 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ---
 
-# Fase V2 — recursos faltantes do produto
+## Fase V2 — recursos faltantes do produto
 
-## P7 — Busca, geo, alertas e cesta ausentes
+### P7 — Busca, geo, alertas e cesta ausentes
 
 **Arquivos:** `src/domain/*`, `src/application/*`, `src/http/routes/*`, `src/infrastructure/database/schema.ts`
 
 Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo próprio (não estender `PriceRepository`).
 
-### P7a — Busca de produtos
+#### P7a — Busca de produtos
 
 - ⬜ 7a.1 Migração: extensão `pg_trgm` ou coluna `tsvector` em `products` + índice (GIN/GiST).
 - ⬜ 7a.2 Porta `ProductSearch` + use-case `SearchProducts` (módulo `application/search`).
 - ⬜ 7a.3 Rota `GET /api/v1/products/search?q=&limit=&cursor=` com schemas Zod/OpenAPI.
 - ⬜ 7a.4 Testes unitários + integração (relevância e limite).
 
-### P7b — Geolocalização de supermercados
+#### P7b — Geolocalização de supermercados
 
 - ⬜ 7b.1 Migração: `lat numeric(9,6)`, `lng numeric(9,6)`, coluna geohash + índice em `stores`.
 - ⬜ 7b.2 Rota `GET /api/v1/stores/nearby?lat=&lng=&radiusKm=` (b-box/geohash prefix; PostGIS só se houver necessidade real).
 - ⬜ 7b.3 Seed com coordenadas realistas; teste de integração.
 
-### P7c — Alertas de preço
+#### P7c — Alertas de preço
 
 - ⬜ 7c.1 Migração: tabela `alerts` (user, produto, preço-alvo, ativo, canal).
 - ⬜ 7c.2 Rota protegida por JWT: CRUD de alertas do usuário (`userId` do token vira autorização real).
 - ⬜ 7c.3 Publicar `PriceRecorded` após `record` no worker; avaliação de regras no worker (não no request path).
 - ⬜ 7c.4 Testes: alerta dispara ao cruzar alvo; alerta inativo não dispara.
 
-### P7d — Comparação de cesta
+#### P7d — Comparação de cesta
 
 - ⬜ 7d.1 Porta de leitura multi-produto (`compareMany`) mantendo acesso a `current_prices` (sem varrer histórico).
 - ⬜ 7d.2 Rota `POST /api/v1/baskets/compare` (lista de produtos + local) com totalização por loja.
@@ -269,7 +273,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P9 — Paginação cursor-based ausente
+### P9 — Paginação cursor-based ausente
 
 **Arquivos:** `src/application/ports/price-repository.ts`, `price-repository-drizzle.ts`, `src/http/routes/prices.ts`
 
@@ -283,7 +287,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P10 — Modelo sem tipo de preço (promo vs regular)
+### P10 — Modelo sem tipo de preço (promo vs regular)
 
 **Arquivos:** `schema.ts`, `price.ts`, migração nova
 
@@ -298,13 +302,13 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P12 — Métricas de domínio e trace nos jobs
+### P12 — Métricas de domínio e trace nos jobs
 
 **Arquivos:** `src/infrastructure/observability/*`, `src/infrastructure/queue/*`
 
-- ⬜ 12.1 Gauges: `outbox_backlog_events` (se ainda não existir via P1), `price_ingestion_lag_seconds` (`now() - published_at`), `price_served_age_seconds` (idade dos preços em `compare`).
-- ⬜ 12.2 Propagar `traceparent` no payload do job (BullMQ/outbox) e `trace.extract` no worker.
-- ⬜ 12.3 Painel Grafana: backlog, lag de ingestão, idade de preços, profundidade da fila.
+- ⬜ 12.1 Gauges: `outbox_backlog_events` (se ainda não existir via P1), `price_ingestion_lag_seconds` (idade do evento pendente desde `created_at`), `price_served_age_seconds` (idade dos preços em `compare`).
+- ⬜ 12.2 Propagar `traceparent` no payload da outbox e `trace.extract` no worker.
+- ⬜ 12.3 Painel Grafana: backlog, lag de ingestão e idade de preços.
 - ⬜ 12.4 Alertas Prometheus: backlog crescente por N minutos; lag acima de X.
 - ⬜ 12.5 Executar validação (Skills → BP6).
 
@@ -312,7 +316,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-## P15 — Detalhes menores
+### P15 — Detalhes menores
 
 - ⬜ 15.1 `main.ts`: injetar a mesma instância de `RedisCache` usada pelas rotas no shutdown (fechar a conexão real).
 - ⬜ 15.2 Separar portas de leitura/escrita (`PriceReader` / `PriceWriter`) quando `compareMany` (P7d) entrar.
@@ -325,7 +329,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-# Fase V3 — escala e maturidade (gatilhos baseados em dados)
+## Fase V3 — escala e maturidade (gatilhos baseados em dados)
 
 | ID   | Item                                                                          | Gatilho sugerido                                      | Status     |
 | ---- | ----------------------------------------------------------------------------- | ----------------------------------------------------- | ---------- |
@@ -339,11 +343,11 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 ---
 
-# Skills de validação
+## Skills de validação
 
 Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Rode os comandos indicados.
 
-## SV1 — Segurança geral (obrigatório em todo item que toca HTTP, auth, filas ou dados)
+### SV1 — Segurança geral (obrigatório em todo item que toca HTTP, auth, filas ou dados)
 
 - ⬜ Nenhum `process.env` fora de `src/config/env.ts` → `grep -rn "process.env" src/` retorna só `env.ts`.
 - ⬜ Nenhum segredo, hash, token ou stack trace em respostas/logs → revisar o diff e `grep -rn "Authorization\|passwordHash\|JWT_SECRET" src/` (apenas fluxos internos legítimos).
@@ -353,7 +357,7 @@ Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Ro
 - ⬜ Labels Prometheus sem IDs de produto/loja/usuário (cardinalidade).
 - ⬜ Erros de terceiros traduzidos para envelope `{ error: { code, message } }` — sem vazamento de detalhes internos.
 
-## SV2 — Segurança de autenticação (itens P6, P11, P14, V3-5)
+### SV2 — Segurança de autenticação (itens P6, P11, P14, V3-5)
 
 - ⬜ Rate limit aplicado nas rotas de login/registro; `429` com `Retry-After`.
 - ⬜ Falha de login genérica (`INVALID_CREDENTIALS`) — sem revelar se o e-mail existe.
@@ -361,7 +365,7 @@ Checklists obrigatórios antes de marcar qualquer item como `✅ Concluído`. Ro
 - ⬜ JWT valida `issuer`, `audience` e algoritmo (`algorithms: ['HS256']`); sem `none`/fallback.
 - ⬜ Registro não aceita `userId`/campos de privilégio do cliente.
 
-## SV3 — Validação de dependências e APIs preteridas
+### SV3 — Validação de dependências e APIs preteridas
 
 Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
@@ -376,7 +380,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Nenhum `@deprecated` importado → `grep -rn "@deprecated" node_modules/...` sob demanda ou revisão no diff.
 - ⬜ `bun.lock` atualizado e commitado junto da mudança de dependência.
 
-## BP1 — Código e TypeScript
+### BP1 — Código e TypeScript
 
 - ⬜ `bun run typecheck` sem erro (strict, sem `any`, sem `@ts-ignore`, casts justificados no diff).
 - ⬜ `bun run lint` sem warnings (`--max-warnings 0`).
@@ -385,7 +389,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Direção de dependências respeitada: HTTP → aplicação → domínio; domínio sem Hono/Drizzle/Redis/BullMQ/Pino/env.
 - ⬜ Nenhuma regra de negócio nova na rota HTTP ou no adaptador.
 
-## BP2 — Dados e migrações
+### BP2 — Dados e migrações
 
 - ⬜ `schema.ts` é a única fonte de DDL; `bun run db:generate` seguido de **revisão manual** do SQL e do journal.
 - ⬜ Migração existente nunca reescrita; correção sempre em migração nova.
@@ -394,14 +398,14 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Consulta nova não varre o histórico inteiro; usa `current_prices`/índices e limites.
 - ⬜ `RUN_INTEGRATION=1 bun run test:integration` executado (ou justificar ausência de PostgreSQL).
 
-## BP3 — SOLID / Clean Architecture
+### BP3 — SOLID / Clean Architecture
 
 - ⬜ Caso de uso depende de porta (`application/ports`), não de adaptador concreto.
 - ⬜ Nenhum novo singleton global além dos existentes (`db`, conexões Redis); prefira injeção na composição.
 - ⬜ Sem nova abstração sem uso concreto (nada de factory/evento genérico sem chamador).
 - ⬜ Porta não engordou além do necessário (ISP); se cresceu, considerar split leitura/escrita.
 
-## BP4 — Cache e filas
+### BP4 — Cache e filas
 
 - ⬜ Nenhum `SCAN`/`KEYS` no caminho quente (ingestão ou request path).
 - ⬜ Cache: chave versionada, TTL explícito, invalidação O(1) ou por chave exata.
@@ -409,7 +413,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Jobs idempotentes; entrega at-least-once considerada; mudança incompatível de payload versiona o job/evento.
 - ⬜ Falha de cache/queue não derruba request (best-effort) nem silencia erro (sempre log/contabilize).
 
-## BP5 — Testes e entrega
+### BP5 — Testes e entrega
 
 - ⬜ Regra nova tem teste unitário; SQL novo tem teste de integração; contrato/middleware novo tem E2E.
 - ⬜ `bun run test` verde (unitários + E2E em memória).
@@ -418,7 +422,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 - ⬜ Commit em Conventional Commits (ex.: `fix(queue): unblock outbox head-of-line`); hooks Husky não desativados.
 - ⬜ `docker compose config --quiet` se o Compose foi alterado.
 
-## BP6 — Observabilidade
+### BP6 — Observabilidade
 
 - ⬜ Nova rota/caminho emite log `http_request` com `requestId`; erros logados com `err` sem segredos.
 - ⬜ Métricas novas de baixa cardinalidade (sem IDs).
@@ -427,7 +431,7 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 
 ---
 
-## Registro de execução
+### Registro de execução
 
 | Data       | Item | PR/Branch                          | Resultado da validação                                                                                                                                                                                                                                                                              |
 | ---------- | ---- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

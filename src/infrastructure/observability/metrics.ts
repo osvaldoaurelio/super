@@ -18,7 +18,7 @@ export const httpDuration = new Histogram({
 });
 export const outboxBacklog = new Gauge({
   name: 'outbox_backlog_events',
-  help: 'Eventos da outbox que aguardam publicação (inclui os que esgotaram tentativas)',
+  help: 'Eventos da outbox que aguardam processamento',
   registers: [metricsRegistry],
 });
 export const outboxDeadEvents = new Gauge({
@@ -31,9 +31,9 @@ export const outboxDeadLettered = new Counter({
   help: 'Eventos movidos para a dead-letter queue da outbox',
   registers: [metricsRegistry],
 });
-export const outboxDispatchFailures = new Counter({
-  name: 'outbox_dispatch_failures_total',
-  help: 'Falhas ao publicar eventos da outbox, por desfecho',
+export const outboxProcessingFailures = new Counter({
+  name: 'outbox_processing_failures_total',
+  help: 'Falhas ao processar eventos da outbox, por desfecho',
   labelNames: ['outcome'] as const,
   registers: [metricsRegistry],
 });

@@ -9,7 +9,6 @@ const envSchema = z
       .default('info'),
     DATABASE_URL: z.string().url().default('postgres://super:super@localhost:5432/super'),
     REDIS_CACHE_URL: z.string().url().default('redis://localhost:6379/0'),
-    REDIS_QUEUE_URL: z.string().url().default('redis://localhost:6380/0'),
     JWT_SECRET: z.string().min(32).default('dev-only-change-me-with-at-least-32-characters'),
     JWT_ISSUER: z.string().default('super-api'),
     JWT_AUDIENCE: z.string().default('super-api-clients'),

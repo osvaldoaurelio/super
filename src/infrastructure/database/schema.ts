@@ -114,17 +114,17 @@ export const outboxEvents = pgTable(
     type: varchar('type', { length: 120 }).notNull(),
     payload: jsonb('payload').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    publishedAt: timestamp('published_at', { withTimezone: true }),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
     status: varchar('status', { length: 16 }).default('pending').notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull().unique(),
     attempts: integer('attempts').default(0).notNull(),
     lastError: text('last_error'),
   },
   (table) => [
-    index('outbox_unpublished_idx')
+    index('outbox_pending_idx')
       .on(table.createdAt)
-      .where(sql`${table.publishedAt} is null`),
+      .where(sql`${table.status} = 'pending'`),
     check('outbox_attempts_non_negative', sql`${table.attempts} >= 0`),
-    check('outbox_status_valid', sql`${table.status} in ('pending', 'published', 'dead')`),
+    check('outbox_status_valid', sql`${table.status} in ('pending', 'processed', 'dead')`),
   ],
 );

@@ -12,7 +12,6 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
       REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
-      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
       JWT_ISSUER: ${JWT_ISSUER:-super-api}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
@@ -21,7 +20,6 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis-cache: { condition: service_healthy }
-      redis-queue: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
     command: bun run start
@@ -55,7 +53,6 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
       REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
-      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
       JWT_ISSUER: ${JWT_ISSUER:-super-api}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
@@ -63,7 +60,6 @@ services:
     command: bun run worker
     depends_on:
       postgres: { condition: service_healthy }
-      redis-queue: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
     restart: unless-stopped
@@ -82,8 +78,6 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:-postgres://super:super@postgres:5432/super}
-      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-redis://redis-cache:6379/0}
-      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis-queue:6379/0}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-with-at-least-32-characters}
       JWT_ISSUER: ${JWT_ISSUER:-super-api}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-super-api-clients}
@@ -125,26 +119,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  redis-queue:
-    image: redis:7-alpine
-    command:
-      [
-        'redis-server',
-        '--appendonly',
-        'yes',
-        '--maxmemory',
-        '512mb',
-        '--maxmemory-policy',
-        'noeviction',
-      ]
-    volumes: [redis_queue_data:/data]
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
   prometheus:
     image: prom/prometheus:v3.2.1
     environment:
@@ -178,5 +152,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_queue_data:
   grafana_data:

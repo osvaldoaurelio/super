@@ -5,7 +5,7 @@ import type {
   PriceHistoryPoint,
 } from '../../application/ports/price-repository.ts';
 import { PRICE_FRESHNESS_WINDOW_DAYS, type Price } from '../../domain/prices/price.ts';
-import { db } from './client.ts';
+import { db, type DatabaseTransaction } from './client.ts';
 import { currentPrices, priceHistory, stores } from './schema.ts';
 
 export class DrizzlePriceRepository implements PriceRepository {
@@ -49,37 +49,39 @@ export class DrizzlePriceRepository implements PriceRepository {
   }
 
   async record(price: Price): Promise<void> {
-    await db.transaction(async (tx) => {
-      const [inserted] = await tx
-        .insert(priceHistory)
-        .values({
-          productId: price.props.productId,
-          storeId: price.props.storeId,
+    await db.transaction((tx) => this.recordInTransaction(tx, price));
+  }
+
+  async recordInTransaction(tx: DatabaseTransaction, price: Price): Promise<void> {
+    const [inserted] = await tx
+      .insert(priceHistory)
+      .values({
+        productId: price.props.productId,
+        storeId: price.props.storeId,
+        priceCents: price.props.priceCents,
+        observedAt: price.props.observedAt,
+        source: price.props.source,
+        idempotencyKey: price.props.idempotencyKey,
+      })
+      .onConflictDoNothing()
+      .returning({ id: priceHistory.id });
+    if (!inserted) return;
+    await tx
+      .insert(currentPrices)
+      .values({
+        productId: price.props.productId,
+        storeId: price.props.storeId,
+        priceCents: price.props.priceCents,
+        observedAt: price.props.observedAt,
+      })
+      .onConflictDoUpdate({
+        target: [currentPrices.productId, currentPrices.storeId],
+        set: {
           priceCents: price.props.priceCents,
           observedAt: price.props.observedAt,
-          source: price.props.source,
-          idempotencyKey: price.props.idempotencyKey,
-        })
-        .onConflictDoNothing()
-        .returning({ id: priceHistory.id });
-      if (!inserted) return;
-      await tx
-        .insert(currentPrices)
-        .values({
-          productId: price.props.productId,
-          storeId: price.props.storeId,
-          priceCents: price.props.priceCents,
-          observedAt: price.props.observedAt,
-        })
-        .onConflictDoUpdate({
-          target: [currentPrices.productId, currentPrices.storeId],
-          set: {
-            priceCents: price.props.priceCents,
-            observedAt: price.props.observedAt,
-            updatedAt: new Date(),
-          },
-          setWhere: gt(sql`excluded.observed_at`, currentPrices.observedAt),
-        });
-    });
+          updatedAt: new Date(),
+        },
+        setWhere: gt(sql`excluded.observed_at`, currentPrices.observedAt),
+      });
   }
 }
