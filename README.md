@@ -90,6 +90,8 @@ flowchart LR
 - `POST /api/v1/prices` — requer Bearer JWT e `Idempotency-Key: <UUID>`; retorna 202 após gravar na outbox, não após concluir o trabalho.
 - `GET /health/live`, `GET /health/ready`, `GET /metrics`, `GET /openapi.json`, `GET /docs`.
 
+`auth/register` e `auth/login` têm limite por endereço IP; `POST /prices`, por usuário autenticado e IP. O limite de janela fixa usa `RATE_LIMIT_MAX` (120 por padrão) e `RATE_LIMIT_WINDOW_SECONDS` (60); excedê-lo retorna `429` e `Retry-After`. Se o Redis de cache estiver indisponível, a API permite a requisição e registra um warning. O IP é obtido do socket Bun, sem confiar em `X-Forwarded-For`; atrás de proxy, esse endereço pode ser o do próprio proxy.
+
 Exemplo de ingestão:
 
 ```http

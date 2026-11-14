@@ -14,10 +14,24 @@ import { DrizzlePriceRepository } from '../infrastructure/database/price-reposit
 import { RedisCache } from '../infrastructure/cache/redis-cache.ts';
 import { OutboxPriceQueue } from '../infrastructure/queue/outbox-price-queue.ts';
 import { DomainError } from '../domain/errors.ts';
+import { env } from '../config/env.ts';
 import type { AppEnv } from './types.ts';
+import { createRateLimitMiddleware, type RateLimitCounter } from './middleware/rate-limit.ts';
+import type { PriceJobQueue } from '../application/ports/price-job-queue.ts';
 
-export function createApp() {
+type CreateAppOptions = {
+  rateLimitCounter?: RateLimitCounter;
+  rateLimitMax?: number;
+  rateLimitWindowSeconds?: number;
+  priceQueue?: PriceJobQueue;
+};
+
+export function createApp(options: CreateAppOptions = {}) {
   const app = new OpenAPIHono<AppEnv>();
+  const cache = new RedisCache();
+  const rateLimitCounter = options.rateLimitCounter ?? cache;
+  const rateLimitMax = options.rateLimitMax ?? env.RATE_LIMIT_MAX;
+  const rateLimitWindowSeconds = options.rateLimitWindowSeconds ?? env.RATE_LIMIT_WINDOW_SECONDS;
   app.use('*', async (context, next) => {
     const requestId = context.req.header('x-request-id')?.slice(0, 128) || randomUUID();
     context.set('requestId', requestId);
@@ -71,6 +85,26 @@ export function createApp() {
   app.notFound((context) =>
     context.json({ error: { code: 'NOT_FOUND', message: 'Rota não encontrada.' } }, 404),
   );
+  app.use(
+    '/api/v1/auth/register',
+    createRateLimitMiddleware({
+      scope: 'auth:register',
+      max: rateLimitMax,
+      windowSeconds: rateLimitWindowSeconds,
+      counter: rateLimitCounter,
+      identifier: (context) => context.env.clientIp,
+    }),
+  );
+  app.use(
+    '/api/v1/auth/login',
+    createRateLimitMiddleware({
+      scope: 'auth:login',
+      max: rateLimitMax,
+      windowSeconds: rateLimitWindowSeconds,
+      counter: rateLimitCounter,
+      identifier: (context) => context.env.clientIp,
+    }),
+  );
   app.get('/health/live', (context) => context.json({ status: 'ok' }));
   app.get('/health/worker', async (context) => {
     try {
@@ -118,8 +152,18 @@ export function createApp() {
     '/api/v1/prices',
     createPriceRoutes({
       repository: new DrizzlePriceRepository(),
-      cache: new RedisCache(),
-      queue: new OutboxPriceQueue(),
+      cache,
+      queue: options.priceQueue ?? new OutboxPriceQueue(),
+      rateLimit: createRateLimitMiddleware({
+        scope: 'prices',
+        max: rateLimitMax,
+        windowSeconds: rateLimitWindowSeconds,
+        counter: rateLimitCounter,
+        identifier: (context) => {
+          const ip = context.env.clientIp;
+          return ip ? `${context.get('userId')}:${ip}` : undefined;
+        },
+      }),
     }),
   );
   app.doc('/openapi.json', {
