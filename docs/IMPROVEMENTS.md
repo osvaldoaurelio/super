@@ -23,23 +23,23 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 
 ## Sumário de status
 
-| ID  | Item                                                      | Severidade | Fase | Status       | PR/Data                                       |
-| --- | --------------------------------------------------------- | ---------- | ---- | ------------ | --------------------------------------------- |
-| P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído | fix/outbox-head-of-line — 13/11/2026          |
-| P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído | fix/cache-versioned-invalidation — 13/11/2026 |
-| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído | fix/price-freshness-window — 13/11/2026       |
-| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído | fix/ingestion-dlq-feedback — 13/11/2026       |
-| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído | fix/outbox-batch-worker — 13/11/2026          |
-| P6  | Rate limiting ausente                                     | 🟠 Alto    | V1   | ✅ Concluído | feat/redis-rate-limiting — 13/11/2026         |
-| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer   | —                                             |
-| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer   | —                                             |
+| ID  | Item                                                      | Severidade | Fase | Status          | PR/Data                                       |
+| --- | --------------------------------------------------------- | ---------- | ---- | --------------- | --------------------------------------------- |
+| P1  | Head-of-line blocking no dispatcher da outbox             | 🔴 Crítico | V1   | ✅ Concluído    | fix/outbox-head-of-line — 13/11/2026          |
+| P2  | Invalidação de cache via `SCAN` no hot path               | 🔴 Crítico | V1   | ✅ Concluído    | fix/cache-versioned-invalidation — 13/11/2026 |
+| P3  | Comparação sem frescor + `observedAt` no futuro           | 🔴 Crítico | V1   | ✅ Concluído    | fix/price-freshness-window — 13/11/2026       |
+| P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído    | fix/ingestion-dlq-feedback — 13/11/2026       |
+| P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído    | fix/outbox-batch-worker — 13/11/2026          |
+| P6  | Rate limiting ausente                                     | 🟠 Alto    | V1   | ✅ Concluído    | feat/redis-rate-limiting — 13/11/2026         |
+| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer      | —                                             |
+| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | 🚧 Em andamento | fix/source-scoped-idempotency                 |
+| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer      | —                                             |
+| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer      | —                                             |
+| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer      | —                                             |
+| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer      | —                                             |
+| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer      | —                                             |
+| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer      | —                                             |
+| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer      | —                                             |
 
 ---
 
@@ -176,13 +176,15 @@ O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas po
 
 **Objetivo:** unicidade por fonte; colisão entre fontes distintas não descarta preço silenciosamente.
 
-- ⬜ 8.1 Criar migração: trocar `price_history.idempotency_key UNIQUE` por `UNIQUE (source, idempotency_key)` (dropar índice global antigo).
-- ⬜ 8.2 Idem para `outbox_events.idempotency_key` → `UNIQUE (type, idempotency_key)`.
-- ⬜ 8.3 Revisar `onConflictDoNothing` no repositório/consumer da outbox para o novo alvo de conflito.
-- ⬜ 8.4 Teste de integração: mesma chave de fontes diferentes ⇒ ambas as observações gravadas.
-- ⬜ 8.5 Executar validação (Skills → BP2, BP5, SV3).
+- [x] 8.1 Criar migração: trocar `price_history.idempotency_key UNIQUE` por `UNIQUE (source, idempotency_key)` (dropar índice global antigo).
+- [x] 8.2 Idem para `outbox_events.idempotency_key` → `UNIQUE (type, idempotency_key)`; no evento de preço, derivar a chave do par `(source, idempotencyKey)` para evitar colisão entre fontes.
+- [x] 8.3 Revisar `onConflictDoNothing` no repositório/consumer da outbox para o novo alvo de conflito.
+- [x] 8.4 Teste de integração: mesma chave de fontes diferentes ⇒ ambas as observações gravadas.
+- [x] 8.5 Executar validação (Skills → BP2, BP5, SV3).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** 🚧 Em andamento — Branch: `fix/source-scoped-idempotency`. Validação concluída; PR pendente.
+
+**Validação:** `typecheck`, `lint`, `format:check`, `test`, integração PostgreSQL e `bun outdated` executados. O `bun outdated` apontou atualizações de dependências, incluindo majors; nenhuma foi aplicada por não fazer parte do escopo de P8.
 
 ---
 

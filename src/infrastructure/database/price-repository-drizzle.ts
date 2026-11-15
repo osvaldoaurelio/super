@@ -63,7 +63,9 @@ export class DrizzlePriceRepository implements PriceRepository {
         source: price.props.source,
         idempotencyKey: price.props.idempotencyKey,
       })
-      .onConflictDoNothing()
+      .onConflictDoNothing({
+        target: [priceHistory.source, priceHistory.idempotencyKey],
+      })
       .returning({ id: priceHistory.id });
     if (!inserted) return;
     await tx

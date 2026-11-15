@@ -29,6 +29,13 @@
       "when": 1794615049717,
       "tag": "0003_outbox_batch_processing",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794701774364,
+      "tag": "0004_source_scoped_idempotency",
+      "breakpoints": true
     }
   ]
 }
