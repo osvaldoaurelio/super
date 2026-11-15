@@ -31,8 +31,8 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P4  | Ingestão sem validação de payload, DLQ e feedback         | 🟠 Alto    | V1   | ✅ Concluído    | fix/ingestion-dlq-feedback — 13/11/2026       |
 | P5  | Over-engineering: outbox → polling → BullMQ               | 🟠 Alto    | V1   | ✅ Concluído    | fix/outbox-batch-worker — 13/11/2026          |
 | P6  | Rate limiting ausente                                     | 🟠 Alto    | V1   | ✅ Concluído    | feat/redis-rate-limiting — 13/11/2026         |
-| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ⬜ A fazer      | —                                             |
-| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | 🚧 Em andamento | fix/source-scoped-idempotency                 |
+| P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | 🚧 Em andamento | feat/product-search                           |
+| P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ✅ Concluído    | fix/source-scoped-idempotency — 15/11/2026    |
 | P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer      | —                                             |
 | P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer      | —                                             |
 | P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer      | —                                             |
@@ -182,7 +182,7 @@ O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas po
 - [x] 8.4 Teste de integração: mesma chave de fontes diferentes ⇒ ambas as observações gravadas.
 - [x] 8.5 Executar validação (Skills → BP2, BP5, SV3).
 
-**Status:** 🚧 Em andamento — Branch: `fix/source-scoped-idempotency`. Validação concluída; PR pendente.
+**Status:** ✅ Concluído — PR/Data: `fix/source-scoped-idempotency` — 15/11/2026
 
 **Validação:** `typecheck`, `lint`, `format:check`, `test`, integração PostgreSQL e `bun outdated` executados. O `bun outdated` apontou atualizações de dependências, incluindo majors; nenhuma foi aplicada por não fazer parte do escopo de P8.
 
@@ -248,10 +248,10 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 #### P7a — Busca de produtos
 
-- ⬜ 7a.1 Migração: extensão `pg_trgm` ou coluna `tsvector` em `products` + índice (GIN/GiST).
-- ⬜ 7a.2 Porta `ProductSearch` + use-case `SearchProducts` (módulo `application/search`).
-- ⬜ 7a.3 Rota `GET /api/v1/products/search?q=&limit=&cursor=` com schemas Zod/OpenAPI.
-- ⬜ 7a.4 Testes unitários + integração (relevância e limite).
+- [x] 7a.1 Migração: extensão `pg_trgm` + índices GIN trigram em `name` e `brand`.
+- [x] 7a.2 Porta `ProductSearch` + use-case `SearchProducts`.
+- [x] 7a.3 Rota `GET /api/v1/products/search?q=&limit=&cursor=` com schemas Zod/OpenAPI.
+- [x] 7a.4 Testes unitários + integração (relevância, fuzzy match, limite e cursor).
 
 #### P7b — Geolocalização de supermercados
 
@@ -273,7 +273,7 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 - ⬜ 7d.3 Cache por hash do conjunto de produtos + versão (padrão do P2).
 - ⬜ 7d.4 Testes unitários (totalização) + integração (ordenar por menor total).
 
-**Status (por sub-item):** P7a ⬜ · P7b ⬜ · P7c ⬜ · P7d ⬜ — PR/Data: —
+**Status (por sub-item):** P7a ✅ · P7b ⬜ · P7c ⬜ · P7d ⬜ — Branch/Data: `feat/product-search` — 15/11/2026
 
 ---
 
@@ -444,3 +444,4 @@ Rode a cada item; remova o uso de APIs deprecadas antes de completar.
 | 13/11/2026 | P3   | `fix/price-freshness-window`       | Concluído: SV1 sem segredos/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 integração PostgreSQL 6/6 (`prices.test.ts` inclui filtro de frescor); BP5 `bun run test` 24/24. PostgreSQL de teste descartável parado após a validação.                             |
 | 13/11/2026 | P4   | `fix/ingestion-dlq-feedback`       | Concluído: SV1 sem dados sensíveis/labels de alta cardinalidade; BP1 `typecheck`, `lint`, `format:check` verdes; BP2 migração revisada e integração PostgreSQL 8/8 (inclui FK real); BP5 `bun run test` 33/33. Falhas permanentes vão para `dead`; falhas transitórias preservam retry.             |
 | 13/11/2026 | P6   | `feat/redis-rate-limiting`         | SV1/SV2 sem IPs ou user IDs em labels/logs; BP1 e BP5 válidos; 29/29 testes. E2E cobre 429, `Retry-After`, identidade e fail-open; Redis Lua e indisponibilidade validados.                                                                                                                         |
+| 15/11/2026 | P7a  | `feat/product-search`              | Migração PostgreSQL com `pg_trgm` e GIN revisada; `typecheck`, lint, testes unitários/E2E (32) e integração PostgreSQL (14) passaram. Busca fuzzy por nome/marca, relevância e paginação por cursor cobertas.                                                                                       |

@@ -87,6 +87,7 @@ flowchart LR
 - `POST /api/v1/auth/login` — autentica e retorna JWT de acesso.
 - `GET /api/v1/prices/{productId}/compare?city=São%20Paulo&state=SP` — ofertas atuais em ordem crescente, moeda BRL e valores inteiros em centavos.
 - `GET /api/v1/prices/{productId}/history?days=90&limit=500` — observações recentes, limitadas.
+- `GET /api/v1/products/search?q=leite&limit=20&cursor=...` — busca aproximada por nome e marca, ordenada por relevância; `q` aceita 3–120 caracteres, `limit` de 1–50 (padrão 20) e o cursor é vinculado à consulta.
 - `POST /api/v1/prices` — requer Bearer JWT e `Idempotency-Key: <UUID>`; retorna 202 após gravar na outbox, não após concluir o trabalho.
 - `GET /health/live`, `GET /health/ready`, `GET /metrics`, `GET /openapi.json`, `GET /docs`.
 
@@ -106,7 +107,7 @@ Content-Type: application/json
 ## Modelo de dados
 
 - **users**: e-mail canônico, hash scrypt, data de criação.
-- **products**: GTIN opcional (único quando preenchido), nome, marca, categoria e unidade.
+- **products**: GTIN opcional (único quando preenchido), nome, marca, categoria e unidade; busca aproximada acelerada por índices GIN `pg_trgm` em nome e marca.
 - **stores**: cadeia e localização; índice `(state, city)`.
 - **current_prices**: uma linha por `(product_id, store_id)`; índice `(product_id, price_cents)` para comparação ordenada e índice de unicidade do par.
 - **price_history**: observações imutáveis, centavos, origem e data; PK composta `(observed_at, id)`, índices `(product_id, observed_at)` e `(store_id, observed_at)`.

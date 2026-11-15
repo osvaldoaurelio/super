@@ -36,6 +36,13 @@
       "when": 1794701774364,
       "tag": "0004_source_scoped_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794715631606,
+      "tag": "0005_product_search_trgm",
+      "breakpoints": true
     }
   ]
 }

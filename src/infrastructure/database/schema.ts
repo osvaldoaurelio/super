@@ -56,6 +56,8 @@ export const products = pgTable(
       .on(table.gtin)
       .where(sql`${table.gtin} is not null`),
     index('products_category_name_idx').on(table.category, table.name),
+    index('products_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
+    index('products_brand_trgm_idx').using('gin', table.brand.op('gin_trgm_ops')),
   ],
 );
 

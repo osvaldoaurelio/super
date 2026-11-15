@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/http/app.ts';
 import { signAccessToken } from '../../src/infrastructure/auth/jwt.ts';
+import type { ProductSearch } from '../../src/application/ports/product-search.ts';
 import type { RateLimitCounter } from '../../src/http/middleware/rate-limit.ts';
 
 function createMemoryRateLimitCounter(): RateLimitCounter {
@@ -32,6 +33,7 @@ describe('REST API end-to-end', () => {
     expect(spec.status).toBe(200);
     const body = (await spec.json()) as { paths?: Record<string, unknown> };
     expect(body.paths).toHaveProperty('/api/v1/prices/{productId}/compare');
+    expect(body.paths).toHaveProperty('/api/v1/products/search');
     const loginPath = body.paths?.['/api/v1/auth/login'] as
       { post?: { responses?: Record<string, unknown> } } | undefined;
     expect(loginPath?.post?.responses).toHaveProperty('429');
@@ -155,5 +157,34 @@ describe('REST API end-to-end', () => {
     );
 
     expect(response.status).toBe(202);
+  });
+
+  it('searches products and validates search query parameters', async () => {
+    const productSearch: ProductSearch = {
+      search: async ({ query }) => [
+        {
+          id: '123e4567-e89b-42d3-a456-426614174000',
+          gtin: null,
+          name: 'Leite Integral',
+          brand: 'Fazenda Azul',
+          category: 'Laticínios',
+          unit: '1 L',
+          relevance: query === 'leite' ? 0.95 : 0.8,
+        },
+      ],
+    };
+    const searchApp = createApp({ productSearch });
+
+    const response = await searchApp.request('/api/v1/products/search?q=leite&limit=5');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: [{ name: 'Leite Integral', relevance: 0.95 }],
+      meta: { count: 1 },
+    });
+    expect((await searchApp.request('/api/v1/products/search?q=ab')).status).toBe(400);
+    expect(
+      (await searchApp.request('/api/v1/products/search?q=leite&cursor=not-valid')).status,
+    ).toBe(400);
   });
 });

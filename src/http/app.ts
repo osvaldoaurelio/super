@@ -10,7 +10,9 @@ import {
 } from '../infrastructure/observability/metrics.ts';
 import { authRoutes } from './routes/auth.ts';
 import { createPriceRoutes } from './routes/prices.ts';
+import { createProductSearchRoutes } from './routes/product-search.ts';
 import { DrizzlePriceRepository } from '../infrastructure/database/price-repository-drizzle.ts';
+import { DrizzleProductSearch } from '../infrastructure/database/product-search-drizzle.ts';
 import { RedisCache } from '../infrastructure/cache/redis-cache.ts';
 import { OutboxPriceQueue } from '../infrastructure/queue/outbox-price-queue.ts';
 import { DomainError } from '../domain/errors.ts';
@@ -18,12 +20,14 @@ import { env } from '../config/env.ts';
 import type { AppEnv } from './types.ts';
 import { createRateLimitMiddleware, type RateLimitCounter } from './middleware/rate-limit.ts';
 import type { PriceJobQueue } from '../application/ports/price-job-queue.ts';
+import type { ProductSearch } from '../application/ports/product-search.ts';
 
 type CreateAppOptions = {
   rateLimitCounter?: RateLimitCounter;
   rateLimitMax?: number;
   rateLimitWindowSeconds?: number;
   priceQueue?: PriceJobQueue;
+  productSearch?: ProductSearch;
 };
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -164,6 +168,12 @@ export function createApp(options: CreateAppOptions = {}) {
           return ip ? `${context.get('userId')}:${ip}` : undefined;
         },
       }),
+    }),
+  );
+  app.route(
+    '/api/v1/products',
+    createProductSearchRoutes({
+      productSearch: options.productSearch ?? new DrizzleProductSearch(),
     }),
   );
   app.doc('/openapi.json', {
