@@ -100,7 +100,7 @@ export const priceHistory = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.observedAt, table.id] }),
-    unique('price_history_idempotency_unique').on(table.idempotencyKey),
+    unique('price_history_source_idempotency_unique').on(table.source, table.idempotencyKey),
     index('price_history_product_time_idx').on(table.productId, table.observedAt),
     index('price_history_store_time_idx').on(table.storeId, table.observedAt),
     check('price_history_positive', sql`${table.priceCents} > 0`),
@@ -116,11 +116,12 @@ export const outboxEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     processedAt: timestamp('processed_at', { withTimezone: true }),
     status: varchar('status', { length: 16 }).default('pending').notNull(),
-    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull().unique(),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
     attempts: integer('attempts').default(0).notNull(),
     lastError: text('last_error'),
   },
   (table) => [
+    unique('outbox_events_type_idempotency_unique').on(table.type, table.idempotencyKey),
     index('outbox_pending_idx')
       .on(table.createdAt)
       .where(sql`${table.status} = 'pending'`),

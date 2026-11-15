@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../src/infrastructure/database/client.ts';
 import {
   currentPrices,
+  outboxEvents,
   priceHistory,
   products,
   stores,
@@ -10,10 +11,10 @@ import {
 import { closeDatabase } from '../../src/infrastructure/database/client.ts';
 import { Price } from '../../src/domain/prices/price.ts';
 import { DrizzlePriceRepository } from '../../src/infrastructure/database/price-repository-drizzle.ts';
+import { OutboxPriceQueue } from '../../src/infrastructure/queue/outbox-price-queue.ts';
 import { DrizzleOutboxStore } from '../../src/infrastructure/queue/drizzle-outbox-store.ts';
 import { processPendingOutboxBatch } from '../../src/infrastructure/queue/outbox-processor.ts';
 import { runIntegrationSetup } from '../support/integration-setup.ts';
-import { outboxEvents } from '../../src/infrastructure/database/schema.ts';
 
 const describeIntegration = process.env['RUN_INTEGRATION'] === '1' ? describe : describe.skip;
 describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
@@ -207,6 +208,49 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       .from(priceHistory)
       .where(eq(priceHistory.idempotencyKey, idempotencyKey));
     expect(historyRows).toHaveLength(1);
+  });
+
+  it('records the same idempotency key independently for different sources', async () => {
+    const idempotencyKey = crypto.randomUUID();
+    const sourceA = 'source-a';
+    const sourceB = 'source-b';
+    const queue = new OutboxPriceQueue();
+    const observedAt = new Date().toISOString();
+    const price = {
+      productId,
+      storeId,
+      priceCents: 640,
+      observedAt: new Date(observedAt),
+      idempotencyKey,
+    };
+
+    await queue.enqueue({ ...price, source: sourceA });
+    await queue.enqueue({ ...price, source: sourceA });
+    await queue.enqueue({ ...price, source: sourceB });
+
+    const events = await db
+      .select({ id: outboxEvents.id })
+      .from(outboxEvents)
+      .where(
+        sql`${outboxEvents.type} = 'price.record' and ${outboxEvents.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+      );
+    outboxIds.push(...events.map((event) => event.id));
+    expect(events).toHaveLength(2);
+
+    await expect(
+      processPendingOutboxBatch({
+        store: outbox,
+        repository,
+        cache: { bumpVersion: async () => 1 },
+        now: () => new Date(),
+      }),
+    ).resolves.toMatchObject({ claimed: 2 });
+
+    const historyRows = await db
+      .select({ source: priceHistory.source })
+      .from(priceHistory)
+      .where(eq(priceHistory.idempotencyKey, idempotencyKey));
+    expect(historyRows.map((row) => row.source).sort()).toEqual([sourceA, sourceB].sort());
   });
 
   it('records a transient failure and leaves its event retryable', async () => {
