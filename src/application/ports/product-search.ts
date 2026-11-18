@@ -10,6 +10,8 @@ export type ProductSearchItem = {
   brand: string | null;
   category: string;
   unit: string;
+  unitMeasure: 'unit' | 'g' | 'ml';
+  unitQuantity: number;
   relevance: number;
 };
 

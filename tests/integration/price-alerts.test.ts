@@ -113,7 +113,7 @@ describeIntegration('price alerts (PostgreSQL)', () => {
       .where(
         and(
           eq(outboxEvents.type, 'price.record'),
-          sql`${outboxEvents.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+          sql`${outboxEvents.payload}->'price'->>'idempotencyKey' = ${idempotencyKey}`,
         ),
       );
     if (!priceEvent) throw new Error('Evento de preço não foi criado.');
@@ -123,7 +123,7 @@ describeIntegration('price alerts (PostgreSQL)', () => {
       store: outboxStore,
       repository: productRepository,
       alerts: alertRepository,
-      cache: { bumpVersion: async () => 1 },
+      cache: { bumpVersion: async () => 1, set: async () => {} },
       now: () => new Date(),
     };
     await processPendingOutboxBatch(processorDeps);

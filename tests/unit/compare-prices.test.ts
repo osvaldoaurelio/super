@@ -38,7 +38,11 @@ describe('ComparePrices', () => {
       useCase.execute({ productId: 'p1', city: 'São Paulo', state: 'SP' }),
     ).resolves.toEqual(offers);
     expect(repository.compare).toHaveBeenCalledOnce();
-    expect(cache.set).toHaveBeenLastCalledWith('prices:v2:p1:7:SP:S%C3%A3o%20Paulo', offers, 60);
+    expect(cache.set).toHaveBeenLastCalledWith(
+      'prices:v3:p1:7:SP:S%C3%A3o%20Paulo:100',
+      offers,
+      60,
+    );
   });
 
   it('returns cached result without querying repository', async () => {
@@ -47,5 +51,21 @@ describe('ComparePrices', () => {
     await useCase.execute({ productId: 'p1' });
     expect(repository.compare).toHaveBeenCalledOnce();
     expect(cache.set).toHaveBeenCalledOnce();
+  });
+
+  it('passes a bounded requested offer limit to the reader and varies the cache key', async () => {
+    const { useCase, repository, cache } = setup();
+    await useCase.execute({ productId: 'p1', limit: 12 });
+
+    expect(repository.compare).toHaveBeenCalledWith('p1', {}, 12);
+    expect(cache.set).toHaveBeenLastCalledWith('prices:v3:p1:0:*:*:12', expect.any(Array), 60);
+  });
+
+  it('rejects limits outside the supported range', async () => {
+    const { useCase, repository } = setup();
+    await expect(useCase.execute({ productId: 'p1', limit: 101 })).rejects.toMatchObject({
+      code: 'INVALID_LIMIT',
+    });
+    expect(repository.compare).not.toHaveBeenCalled();
   });
 });

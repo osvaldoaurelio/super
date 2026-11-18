@@ -1,0 +1,17 @@
+groups:
+  - name: super-api-prices
+    rules:
+      - alert: PriceOutboxBacklog
+        expr: outbox_backlog_events > 0 and deriv(outbox_backlog_events[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A outbox de preços mantém eventos pendentes por mais de 10 minutos.
+      - alert: PriceIngestionLag
+        expr: price_ingestion_lag_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: O evento de preço pendente mais antigo excede cinco minutos.

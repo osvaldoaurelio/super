@@ -1,8 +1,9 @@
 import { ZodError } from 'zod';
+import { context, propagation, ROOT_CONTEXT, SpanStatusCode, trace } from '@opentelemetry/api';
 import type { Cache } from '../../application/ports/cache.ts';
 import { DomainError } from '../../domain/errors.ts';
 import { Price } from '../../domain/prices/price.ts';
-import { PricePropsSchema } from './price-props-schema.ts';
+import { PriceJobSchema, PricePropsSchema } from './price-props-schema.ts';
 import { RedisCache } from '../cache/redis-cache.ts';
 import { logger } from '../observability/logger.ts';
 import { outboxDeadLettered, outboxProcessingFailures } from '../observability/metrics.ts';
@@ -27,7 +28,7 @@ export type OutboxProcessorDeps = {
   >;
   repository: Pick<DrizzlePriceRepository, 'recordInTransaction'>;
   alerts: Pick<DrizzlePriceAlertRepository, 'evaluatePriceRecorded'>;
-  cache: Pick<Cache, 'bumpVersion'>;
+  cache: Pick<Cache, 'bumpVersion' | 'set'>;
   now: () => Date;
 };
 
@@ -91,6 +92,10 @@ function parseEvent(event: OutboxEvent): ReturnType<typeof Price.create> {
   if (event.type !== 'price.record') {
     throw new PermanentOutboxError(`Tipo de evento de outbox não suportado: ${event.type}`);
   }
+  if (typeof event.payload === 'object' && event.payload !== null && 'version' in event.payload) {
+    const job = PriceJobSchema.parse(event.payload);
+    return Price.create(job.price);
+  }
   return Price.create(PricePropsSchema.parse(event.payload));
 }
 
@@ -99,6 +104,14 @@ function parsePriceRecordedEvent(event: OutboxEvent) {
     throw new PermanentOutboxError(`Tipo de evento de outbox não suportado: ${event.type}`);
   }
   return PriceRecordedSchema.parse(event.payload);
+}
+
+function getTraceparent(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null || !('traceparent' in payload)) {
+    return undefined;
+  }
+  const parsed = PriceJobSchema.shape.traceparent.safeParse(payload.traceparent);
+  return parsed.success ? parsed.data : undefined;
 }
 
 export async function processPendingOutboxBatch(
@@ -110,42 +123,60 @@ export async function processPendingOutboxBatch(
     const results: EventOutcome[] = [];
 
     for (const event of events) {
-      try {
-        const productId = await tx.transaction(async (eventTx) => {
-          if (event.type === 'price.record') {
-            const price = parseEvent(event);
-            const recorded = await deps.repository.recordInTransaction(eventTx, price);
-            if (recorded) {
-              await deps.store.publish(eventTx, 'price.recorded', recorded, event.id);
+      const traceparent = getTraceparent(event.payload);
+      const extracted = traceparent
+        ? propagation.extract(ROOT_CONTEXT, { traceparent })
+        : ROOT_CONTEXT;
+      await context.with(extracted, async () => {
+        await trace
+          .getTracer('super-worker')
+          .startActiveSpan('outbox.price.process', async (span) => {
+            try {
+              const productId = await tx.transaction(async (eventTx) => {
+                if (event.type === 'price.record') {
+                  const price = parseEvent(event);
+                  const recorded = await deps.repository.recordInTransaction(eventTx, price);
+                  if (recorded) {
+                    await deps.store.publish(eventTx, 'price.recorded', recorded, event.id);
+                  }
+                  await deps.store.markProcessed(eventTx, event.id, deps.now());
+                  return price.props.productId;
+                }
+                if (event.type === 'price.recorded') {
+                  const recorded = parsePriceRecordedEvent(event);
+                  await deps.alerts.evaluatePriceRecorded(eventTx, event.id, recorded, deps.now());
+                  await deps.store.markProcessed(eventTx, event.id, deps.now());
+                  return undefined;
+                }
+                throw new PermanentOutboxError(
+                  `Tipo de evento de outbox não suportado: ${event.type}`,
+                );
+              });
+              if (productId) results.push({ kind: 'processed', event, productId });
+              else results.push({ kind: 'processed', event });
+            } catch (error) {
+              span.recordException(error instanceof Error ? error : String(error));
+              span.setStatus({ code: SpanStatusCode.ERROR });
+              if (isPermanentPriceError(error)) {
+                const marked = await deps.store.markDead(tx, event.id, errorMessage(error));
+                if (!marked)
+                  throw new Error(`Não foi possível mover o evento ${event.id} para dead.`);
+                results.push({ kind: 'dead', event, error });
+              } else {
+                const outcome = await deps.store.markFailed(tx, event.id, errorMessage(error));
+                results.push({
+                  kind: 'failed',
+                  event,
+                  error,
+                  attempts: event.attempts + 1,
+                  failure: outcome,
+                });
+              }
+            } finally {
+              span.end();
             }
-            await deps.store.markProcessed(eventTx, event.id, deps.now());
-            return price.props.productId;
-          }
-
-          const recorded = parsePriceRecordedEvent(event);
-          await deps.alerts.evaluatePriceRecorded(eventTx, event.id, recorded, deps.now());
-          await deps.store.markProcessed(eventTx, event.id, deps.now());
-          return undefined;
-        });
-        if (productId) results.push({ kind: 'processed', event, productId });
-        else results.push({ kind: 'processed', event });
-      } catch (error) {
-        if (isPermanentPriceError(error)) {
-          const marked = await deps.store.markDead(tx, event.id, errorMessage(error));
-          if (!marked) throw new Error(`Não foi possível mover o evento ${event.id} para dead.`);
-          results.push({ kind: 'dead', event, error });
-          continue;
-        }
-
-        const outcome = await deps.store.markFailed(tx, event.id, errorMessage(error));
-        results.push({
-          kind: 'failed',
-          event,
-          error,
-          attempts: event.attempts + 1,
-          failure: outcome,
-        });
-      }
+          });
+      });
     }
     return results;
   });

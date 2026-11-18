@@ -7,12 +7,14 @@ const ErrorResponse = z.object({ error: z.object({ code: z.string(), message: z.
 const SearchResponse = z.object({
   data: z.array(
     z.object({
-      id: z.string().uuid(),
+      id: z.uuid(),
       gtin: z.string().nullable(),
       name: z.string(),
       brand: z.string().nullable(),
       category: z.string(),
       unit: z.string(),
+      unitMeasure: z.enum(['unit', 'g', 'ml']),
+      unitQuantity: z.number().int().positive(),
       relevance: z.number().min(0).max(1),
     }),
   ),

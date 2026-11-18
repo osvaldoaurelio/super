@@ -124,7 +124,9 @@ services:
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     command: ['--config.file=/etc/prometheus/prometheus.yml', '--storage.tsdb.retention.time=15d']
-    volumes: ['./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro']
+    volumes:
+      - './monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro'
+      - './monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro'
     ports: ['127.0.0.1:9090:9090']
     entrypoint:
       - /bin/sh

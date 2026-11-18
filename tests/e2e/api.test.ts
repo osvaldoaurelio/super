@@ -49,8 +49,26 @@ describe('REST API end-to-end', () => {
       { post?: { responses?: Record<string, unknown> } } | undefined;
     expect(loginPath?.post?.responses).toHaveProperty('429');
   });
+
+  it('uses the worker heartbeat for health instead of checking database availability', async () => {
+    const missingHeartbeat = createApp({ workerHeartbeat: async () => null });
+    expect((await missingHeartbeat.request('/health/worker')).status).toBe(503);
+
+    const staleHeartbeat = createApp({ workerHeartbeat: async () => Date.now() - 60_000 });
+    expect((await staleHeartbeat.request('/health/worker')).status).toBe(503);
+
+    const activeHeartbeat = createApp({ workerHeartbeat: async () => Date.now() });
+    expect((await activeHeartbeat.request('/health/worker')).status).toBe(200);
+  });
   it('rejects an invalid price UUID before touching the database', async () => {
     const response = await app.request('/api/v1/prices/not-a-uuid/compare');
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects an invalid price history cursor', async () => {
+    const response = await app.request(
+      `/api/v1/prices/${crypto.randomUUID()}/history?cursor=not-valid`,
+    );
     expect(response.status).toBe(400);
   });
   it('protects price submissions with JWT authentication', async () => {
@@ -180,6 +198,8 @@ describe('REST API end-to-end', () => {
           brand: 'Fazenda Azul',
           category: 'Laticínios',
           unit: '1 L',
+          unitMeasure: 'ml',
+          unitQuantity: 1000,
           relevance: query === 'leite' ? 0.95 : 0.8,
         },
       ],

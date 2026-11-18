@@ -39,6 +39,8 @@ export class DrizzleProductSearch implements ProductSearch {
         brand: products.brand,
         category: products.category,
         unit: products.unit,
+        unitMeasure: products.unitMeasure,
+        unitQuantity: products.unitQuantity,
         relevance,
       })
       .from(products)

@@ -6,7 +6,8 @@ import { closeDatabase } from './infrastructure/database/client.ts';
 import { RedisCache } from './infrastructure/cache/redis-cache.ts';
 
 startTracing();
-const app = createApp();
+const cache = new RedisCache();
+const app = createApp({ cache });
 const server = Bun.serve({
   fetch: (request, server) => {
     const clientIp = server.requestIP(request)?.address;
@@ -22,7 +23,7 @@ const shutdown = async (signal: string) => {
   shuttingDown = true;
   logger.info({ signal }, 'shutdown_started');
   server.stop(true);
-  await Promise.allSettled([closeDatabase(), new RedisCache().close(), stopTracing()]);
+  await Promise.allSettled([closeDatabase(), cache.close(), stopTracing()]);
   process.exit(0);
 };
 process.on('SIGTERM', () => void shutdown('SIGTERM'));

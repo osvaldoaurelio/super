@@ -8,11 +8,12 @@ import {
   httpRequests,
   metricsRegistry,
 } from '../infrastructure/observability/metrics.ts';
-import { authRoutes } from './routes/auth.ts';
+import { createAuthRoutes } from './routes/auth.ts';
 import { createPriceRoutes } from './routes/prices.ts';
 import { createProductSearchRoutes } from './routes/product-search.ts';
 import { DrizzlePriceRepository } from '../infrastructure/database/price-repository-drizzle.ts';
 import { DrizzleProductSearch } from '../infrastructure/database/product-search-drizzle.ts';
+import { DrizzleUserRepository } from '../infrastructure/database/user-repository-drizzle.ts';
 import { RedisCache } from '../infrastructure/cache/redis-cache.ts';
 import { OutboxPriceQueue } from '../infrastructure/queue/outbox-price-queue.ts';
 import { DomainError } from '../domain/errors.ts';
@@ -30,6 +31,8 @@ import type { PriceAlertRepository } from '../application/ports/price-alert-repo
 import { DrizzlePriceAlertRepository } from '../infrastructure/database/price-alert-repository-drizzle.ts';
 import type { BasketPriceReader } from '../application/ports/basket-price-reader.ts';
 import { DrizzleBasketPriceReader } from '../infrastructure/database/basket-price-reader-drizzle.ts';
+import { hashPassword, verifyPassword } from '../infrastructure/auth/password.ts';
+import { signAccessToken } from '../infrastructure/auth/jwt.ts';
 import type { Cache } from '../application/ports/cache.ts';
 
 type CreateAppOptions = {
@@ -42,13 +45,20 @@ type CreateAppOptions = {
   priceAlertRepository?: PriceAlertRepository;
   basketPriceReader?: BasketPriceReader;
   cache?: Cache;
+  workerHeartbeat?: () => Promise<number | null>;
 };
+
+function isRateLimitCounter(cache: Cache): cache is Cache & RateLimitCounter {
+  return 'incrementFixedWindow' in cache && typeof cache.incrementFixedWindow === 'function';
+}
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = new OpenAPIHono<AppEnv>();
-  const defaultCache = new RedisCache();
-  const cache = options.cache ?? defaultCache;
-  const rateLimitCounter = options.rateLimitCounter ?? defaultCache;
+  const cache = options.cache ?? new RedisCache();
+  const readWorkerHeartbeat =
+    options.workerHeartbeat ?? (async () => cache.get<number>('worker:heartbeat'));
+  const rateLimitCounter =
+    options.rateLimitCounter ?? (isRateLimitCounter(cache) ? cache : new RedisCache());
   const rateLimitMax = options.rateLimitMax ?? env.RATE_LIMIT_MAX;
   const rateLimitWindowSeconds = options.rateLimitWindowSeconds ?? env.RATE_LIMIT_WINDOW_SECONDS;
   app.use('*', async (context, next) => {
@@ -126,13 +136,10 @@ export function createApp(options: CreateAppOptions = {}) {
   );
   app.get('/health/live', (context) => context.json({ status: 'ok' }));
   app.get('/health/worker', async (context) => {
-    try {
-      const { sqlClient } = await import('../infrastructure/database/client.ts');
-      await sqlClient`select 1`;
-      return context.json({ status: 'ok' });
-    } catch {
-      return context.json({ status: 'error' }, 503);
-    }
+    const lastSeen = await readWorkerHeartbeat();
+    const ageMs = lastSeen === null ? Number.POSITIVE_INFINITY : Date.now() - lastSeen;
+    const healthy = ageMs >= 0 && ageMs < 60_000;
+    return context.json({ status: healthy ? 'ok' : 'error' }, healthy ? 200 : 503);
   });
   app.get('/health/ready', async (context) => {
     const checks: Record<string, string> = {};
@@ -156,7 +163,7 @@ export function createApp(options: CreateAppOptions = {}) {
     return context.json({ status: ready ? 'ok' : 'error', checks }, ready ? 200 : 503);
   });
   app.get('/metrics', async (context) => {
-    const token = process.env['METRICS_TOKEN'];
+    const token = env.METRICS_TOKEN;
     if (token && context.req.header('authorization') !== `Bearer ${token}`) {
       return context.json(
         { error: { code: 'UNAUTHORIZED', message: 'Autenticação necessária.' } },
@@ -166,7 +173,15 @@ export function createApp(options: CreateAppOptions = {}) {
     context.header('Content-Type', metricsRegistry.contentType);
     return context.body(await metricsRegistry.metrics());
   });
-  app.route('/api/v1/auth', authRoutes);
+  app.route(
+    '/api/v1/auth',
+    createAuthRoutes({
+      users: new DrizzleUserRepository(),
+      hashPassword,
+      verifyPassword,
+      signAccessToken,
+    }),
+  );
   app.route(
     '/api/v1/prices',
     createPriceRoutes({

@@ -14,6 +14,8 @@ const products: ProductSearchItem[] = [
     brand: 'Fazenda Azul',
     category: 'Laticínios',
     unit: '1 L',
+    unitMeasure: 'ml',
+    unitQuantity: 1000,
     relevance: 0.95,
   },
   {
@@ -23,6 +25,8 @@ const products: ProductSearchItem[] = [
     brand: 'Fazenda Azul',
     category: 'Laticínios',
     unit: '1 L',
+    unitMeasure: 'ml',
+    unitQuantity: 1000,
     relevance: 0.78,
   },
   {
@@ -32,6 +36,8 @@ const products: ProductSearchItem[] = [
     brand: 'Serra Branca',
     category: 'Laticínios',
     unit: '400 g',
+    unitMeasure: 'g',
+    unitQuantity: 400,
     relevance: 0.61,
   },
 ];

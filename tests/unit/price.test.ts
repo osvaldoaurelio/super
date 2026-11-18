@@ -24,6 +24,7 @@ describe('Price', () => {
   it('creates a price in integer cents', () => {
     const price = Price.create(valid);
     expect(price.props.priceCents).toBe(499);
+    expect(price.props.priceType).toBe('regular');
     expect(price.props.observedAt).not.toBe(valid.observedAt);
   });
 

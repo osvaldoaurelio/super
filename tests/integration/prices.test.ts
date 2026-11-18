@@ -25,6 +25,8 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
   let productId = '';
   let storeId = '';
   let staleStoreId = '';
+  const duplicateChainStoreIds: string[] = [];
+  const auxiliaryProductIds: string[] = [];
   const outboxIds: string[] = [];
 
   function processorDeps() {
@@ -32,7 +34,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       store: outbox,
       repository,
       alerts: alertsRepository,
-      cache: { bumpVersion: async () => 1 },
+      cache: { bumpVersion: async () => 1, set: async () => {} },
       now: () => new Date(),
     };
   }
@@ -59,7 +61,13 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     await runIntegrationSetup();
     const [product] = await db
       .insert(products)
-      .values({ name: 'Leite teste', category: 'Laticínios', unit: '1 L' })
+      .values({
+        name: 'Leite teste',
+        category: 'Laticínios',
+        unit: '1 L',
+        unitMeasure: 'ml',
+        unitQuantity: 1000,
+      })
       .returning();
     const [store] = await db
       .insert(stores)
@@ -87,7 +95,14 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       await db.delete(priceHistory).where(eq(priceHistory.productId, productId));
       await db.delete(products).where(eq(products.id, productId));
     }
+    if (auxiliaryProductIds.length) {
+      await db.delete(currentPrices).where(inArray(currentPrices.productId, auxiliaryProductIds));
+      await db.delete(priceHistory).where(inArray(priceHistory.productId, auxiliaryProductIds));
+      await db.delete(products).where(inArray(products.id, auxiliaryProductIds));
+    }
     if (staleStoreId) await db.delete(stores).where(eq(stores.id, staleStoreId));
+    if (duplicateChainStoreIds.length)
+      await db.delete(stores).where(inArray(stores.id, duplicateChainStoreIds));
     if (storeId) await db.delete(stores).where(eq(stores.id, storeId));
     if (outboxIds.length) await db.delete(outboxEvents).where(inArray(outboxEvents.id, outboxIds));
     await closeDatabase();
@@ -108,6 +123,82 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     expect(offers[0]?.priceCents).toBe(725);
     const history = await repository.history(productId, new Date(Date.now() - 60_000), 20);
     expect(history.some((item) => item.priceCents === 725)).toBe(true);
+  });
+
+  it('paginates history by timestamp and ID without repeating observations', async () => {
+    const [paginationProduct] = await db
+      .insert(products)
+      .values({ name: 'Produto para paginação', category: 'Teste', unit: '1 un' })
+      .returning({ id: products.id });
+    if (!paginationProduct) throw new Error('Produto de paginação indisponível.');
+    auxiliaryProductIds.push(paginationProduct.id);
+    const observedAt = new Date(Date.now() - 60_000);
+    for (const priceCents of [510, 520, 530]) {
+      await repository.record(
+        Price.create({
+          productId: paginationProduct.id,
+          storeId,
+          priceCents,
+          observedAt,
+          source: 'pagination-test',
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      );
+    }
+
+    const firstPage = await repository.history(
+      paginationProduct.id,
+      new Date(observedAt.getTime() - 1_000),
+      2,
+    );
+    const last = firstPage.at(-1);
+    if (!last) throw new Error('Primeira página vazia.');
+    const secondPage = await repository.history(
+      paginationProduct.id,
+      new Date(observedAt.getTime() - 1_000),
+      2,
+      {
+        observedAt: last.observedAt,
+        id: last.id,
+      },
+    );
+
+    expect(firstPage).toHaveLength(2);
+    expect(secondPage).toHaveLength(1);
+    expect(new Set([...firstPage, ...secondPage].map((point) => point.id)).size).toBe(3);
+  });
+
+  it('returns at most one cheapest offer per store chain', async () => {
+    const duplicateStores = await db
+      .insert(stores)
+      .values([
+        { name: 'Rede Duplicada A', chain: 'Rede Duplicada', city: 'Campinas', state: 'SP' },
+        { name: 'Rede Duplicada B', chain: 'Rede Duplicada', city: 'Campinas', state: 'SP' },
+      ])
+      .returning();
+    duplicateChainStoreIds.push(...duplicateStores.map((store) => store.id));
+    const observedAt = new Date();
+    for (const [index, store] of duplicateStores.entries()) {
+      await repository.record(
+        Price.create({
+          productId,
+          storeId: store.id,
+          priceCents: index === 0 ? 450 : 400,
+          observedAt,
+          source: 'chain-dedup-test',
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      );
+    }
+
+    const offers = await repository.compare(productId, {}, 100);
+    const chainOffers = offers.filter((offer) => duplicateChainStoreIds.includes(offer.storeId));
+
+    expect(chainOffers).toHaveLength(1);
+    expect(chainOffers[0]).toMatchObject({
+      storeId: duplicateChainStoreIds[1],
+      priceCents: 400,
+    });
   });
   it('does not replace a current price with an older observation', async () => {
     const old = new Date(Date.now() - 86_400_000);
@@ -132,8 +223,43 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
         idempotencyKey: crypto.randomUUID(),
       }),
     );
-    const offers = await repository.compare(productId);
+    const offers = await repository.compare(productId, { city: 'São Paulo' });
     expect(offers[0]?.priceCents).toBe(800);
+  });
+
+  it('records promotional prices without replacing the regular current price', async () => {
+    await repository.record(
+      Price.create({
+        productId,
+        storeId,
+        priceCents: 800,
+        observedAt: new Date(),
+        source: 'test',
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    );
+    await repository.record(
+      Price.create({
+        productId,
+        storeId,
+        priceCents: 500,
+        priceType: 'promo',
+        observedAt: new Date(),
+        source: 'test',
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    );
+
+    const [current] = await db
+      .select({ priceCents: currentPrices.priceCents, priceType: currentPrices.priceType })
+      .from(currentPrices)
+      .where(and(eq(currentPrices.productId, productId), eq(currentPrices.storeId, storeId)));
+    const history = await repository.history(productId, new Date(Date.now() - 60_000), 20);
+
+    expect(current).toMatchObject({ priceCents: 800, priceType: 'regular' });
+    expect(history.some((point) => point.priceType === 'promo' && point.priceCents === 500)).toBe(
+      true,
+    );
   });
 
   it('does not return current prices outside the freshness window', async () => {
@@ -201,7 +327,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
         store: outbox,
         repository,
         alerts: alertsRepository,
-        cache: { bumpVersion: async () => 1 },
+        cache: { bumpVersion: async () => 1, set: async () => {} },
         now: () => new Date(),
       }),
     ).resolves.toMatchObject({ claimed: 2 });
@@ -270,13 +396,17 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     await queue.enqueue({ ...price, source: sourceB });
 
     const events = await db
-      .select({ id: outboxEvents.id })
+      .select({ id: outboxEvents.id, payload: outboxEvents.payload })
       .from(outboxEvents)
       .where(
-        sql`${outboxEvents.type} = 'price.record' and ${outboxEvents.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+        sql`${outboxEvents.type} = 'price.record' and ${outboxEvents.payload}->'price'->>'idempotencyKey' = ${idempotencyKey}`,
       );
     outboxIds.push(...events.map((event) => event.id));
     expect(events).toHaveLength(2);
+    expect(events[0]?.payload).toMatchObject({
+      version: 1,
+      price: { idempotencyKey },
+    });
 
     await expect(processPendingOutboxBatch(processorDeps())).resolves.toMatchObject({ claimed: 2 });
 
@@ -309,15 +439,12 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
 
     await expect(
       processPendingOutboxBatch({
-        store: outbox,
+        ...processorDeps(),
         repository: {
           recordInTransaction: async () => {
             throw new Error('Falha temporária de persistência.');
           },
         },
-        alerts: alertsRepository,
-        cache: { bumpVersion: async () => 1 },
-        now: () => new Date(),
       }),
     ).resolves.toMatchObject({ claimed: 1, retryableFailures: 1 });
 

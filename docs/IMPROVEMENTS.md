@@ -1,6 +1,6 @@
 # Backlog de melhorias — Super API
 
-Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trabalhe **uma melhoria por vez**: abra uma branch/PR por item, marque o status ao concluir e só então comece o próximo.
+Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trabalhe **uma melhoria por vez** na branch definida pelo solicitante; não crie branches ou PRs sem solicitação. Marque o status ao concluir e só então comece o próximo item.
 
 ## Como usar
 
@@ -33,13 +33,13 @@ Arquivo de rastreamento das melhorias propostas na revisão de arquitetura. Trab
 | P6  | Rate limiting ausente                                     | 🟠 Alto    | V1   | ✅ Concluído | feat/redis-rate-limiting — 13/11/2026         |
 | P7  | Busca, geo, alertas e cesta ausentes                      | 🟠 Alto    | V2   | ✅ Concluído | feat/store-geolocation — 16/11/2026           |
 | P8  | Idempotência global por chave única                       | 🟡 Médio   | V1   | ✅ Concluído | fix/source-scoped-idempotency — 15/11/2026    |
-| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ⬜ A fazer   | —                                             |
-| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ⬜ A fazer   | —                                             |
-| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ⬜ A fazer   | —                                             |
+| P9  | Paginação cursor-based ausente                            | 🟡 Médio   | V2   | ✅ Concluído | `features` — 18/11/2026                       |
+| P10 | Modelo sem tipo de preço (promo vs regular)               | 🟡 Médio   | V2   | ✅ Concluído | `features` — 18/11/2026                       |
+| P11 | Módulo de auth com camadas inconsistentes                 | 🟡 Médio   | V1   | ✅ Concluído | `features` — 18/11/2026                       |
+| P12 | Métricas de domínio e trace nos jobs ausentes             | 🟡 Médio   | V2   | ✅ Concluído | `features` — 18/11/2026                       |
+| P13 | Drift de migrações e índice fantasma                      | 🟡 Médio   | V1   | ✅ Concluído | `features` — 18/11/2026                       |
+| P14 | `/health/worker` enganoso + `process.env` fora do `env`   | 🟡 Médio   | V1   | ✅ Concluído | `features` — 18/11/2026                       |
+| P15 | Detalhes menores (shutdown, portas gordas, dedup de rede) | 🟢 Baixo   | V2   | ✅ Concluído | `features` — 18/11/2026                       |
 
 ---
 
@@ -194,14 +194,14 @@ O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas po
 
 **Objetivo:** mesmo estilo do módulo de preços; lógica de registro/login reutilizável e testável.
 
-- ⬜ 11.1 Criar porta `UserRepository` (`findByEmail`, `create`).
-- ⬜ 11.2 Extrair use-case `RegisterUser` (email canônico, hash, detecção de 23505 → erro de domínio `EMAIL_EXISTS`).
-- ⬜ 11.3 Extrair use-case `AuthenticateUser` (verificação de senha, emissão de token).
-- ⬜ 11.4 Rotas passam a depender das portas; composição em `app.ts`/`createApp`.
-- ⬜ 11.5 Testes unitários dos use-cases com doubles (sem tocar banco).
-- ⬜ 11.6 Executar validação (Skills → SV1, SV2, BP1, BP3, BP5).
+- [x] 11.1 Criar porta `UserRepository` (`findByEmail`, `create`).
+- [x] 11.2 Extrair use-case `RegisterUser` (email canônico, hash, detecção de 23505 → erro de domínio `EMAIL_EXISTS`).
+- [x] 11.3 Extrair use-case `AuthenticateUser` (verificação de senha, emissão de token).
+- [x] 11.4 Rotas passam a depender das portas; composição em `app.ts`/`createApp`.
+- [x] 11.5 Testes unitários dos use-cases com doubles (sem tocar banco).
+- [x] 11.6 Executar validação (Skills → SV1, SV2, BP1, BP3, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
@@ -211,13 +211,13 @@ O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas po
 
 **Objetivo:** única fonte de verdade de schema; nenhum DDL fora do journal.
 
-- ⬜ 13.1 Adicionar `current_prices_store_product_idx (store_id, product_id)` em `schema.ts` **ou** remover do SQL manual — registrar a decisão.
-- ⬜ 13.2 Decidir destino de `drizzle/0001_initial.sql` (conteúdo já aplicado?): documentar no journal/README ou absorver no snapshot.
-- ⬜ 13.3 Regra no README: migrações manuais só com justificativa explícita (ex.: `CREATE INDEX CONCURRENTLY`).
-- ⬜ 13.4 Validar `bun run db:migrate` em banco limpo e em banco existente.
-- ⬜ 13.5 Executar validação (Skills → BP2, BP5).
+- [x] 13.1 Adicionar `current_prices_store_product_idx (store_id, product_id)` em `schema.ts` e gerar migração.
+- [x] 13.2 Documentar no README que `drizzle/0001_initial.sql` é histórico e não pertence ao journal executável.
+- [x] 13.3 Documentar que SQL manual exige justificativa explícita (ex.: `CREATE INDEX CONCURRENTLY`).
+- [x] 13.4 Validar `bun run db:migrate` em banco limpo e em banco existente.
+- [x] 13.5 Executar validação (Skills → BP2, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
@@ -227,14 +227,14 @@ O contador Redis usa `INCR`/`EXPIRE` atômicos via Lua, com janelas separadas po
 
 **Objetivo:** readiness real; nenhuma leitura de ambiente fora de `config/env.ts`.
 
-- ⬜ 14.1 Mover `METRICS_TOKEN` para o schema `env` (opcional) e usar `env.METRICS_TOKEN` em `app.ts`.
-- ⬜ 14.2 Worker grava heartbeat `SET worker:heartbeat EX 30` após cada lote/loop bem-sucedido.
-- ⬜ 14.3 `/health/worker` passa a checar `lastSeen < 60 s` (não apenas ping no Redis).
-- ⬜ 14.4 `grep -rn "process.env" src/` deve retornar apenas `src/config/env.ts`.
-- ⬜ 14.5 Testes: worker morto ⇒ `/health/worker` 503.
-- ⬜ 14.6 Executar validação (Skills → SV1, BP1, BP6).
+- [x] 14.1 Mover `METRICS_TOKEN` para o schema `env` (opcional) e usar `env.METRICS_TOKEN` em `app.ts`.
+- [x] 14.2 Worker grava heartbeat `SET worker:heartbeat EX 30` após cada lote/loop bem-sucedido.
+- [x] 14.3 `/health/worker` passa a checar `lastSeen < 60 s` (não apenas ping no Redis).
+- [x] 14.4 `grep -rn "process.env" src/` retorna apenas `src/config/env.ts`.
+- [x] 14.5 Testes: worker morto ⇒ `/health/worker` 503.
+- [x] 14.6 Executar validação (Skills → SV1, BP1, BP6).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
@@ -287,13 +287,13 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 **Arquivos:** `src/application/ports/price-repository.ts`, `price-repository-drizzle.ts`, `src/http/routes/prices.ts`
 
-- ⬜ 9.1 Keyset pagination em `history`: `WHERE (observed_at, id) < (cursor)` `ORDER BY observed_at DESC` (a PK `(observed_at, id)` já dá suporte).
-- ⬜ 9.2 Cursor opaco (base64 de `observedAt+id`) no envelope `meta.nextCursor`.
-- ⬜ 9.3 Tornar `limit` de `compare` configurável (máx. 100), documentado no OpenAPI.
-- ⬜ 9.4 Testes: página 2 não repete nem omite itens; cursor inválido ⇒ 400.
-- ⬜ 9.5 Executar validação (Skills → BP1, BP5).
+- [x] 9.1 Keyset pagination em `history` com desempate por ID e ordenação estável.
+- [x] 9.2 Cursor opaco (base64 de `observedAt+id`) no envelope `meta.nextCursor`.
+- [x] 9.3 Tornar `limit` de `compare` configurável (máx. 100), documentado no OpenAPI.
+- [x] 9.4 Testes: página 2 não repete nem omite itens; cursor inválido ⇒ 400.
+- [x] 9.5 Executar validação (Skills → BP1, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
@@ -301,14 +301,14 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 **Arquivos:** `schema.ts`, `price.ts`, migração nova
 
-- ⬜ 10.1 Migração: `price_type varchar(16) NOT NULL DEFAULT 'regular'` com CHECK em `current_prices` e `price_history`.
-- ⬜ 10.2 Adicionar `priceType` a `PriceProps`/`Price` (default `regular`).
-- ⬜ 10.3 Decisão documentada: qual `price_type` vence no `current_prices` (sugestão: promo não substitui regular na comparação; apenas é registrada no histórico).
-- ⬜ 10.4 `unit_measure`/`unit_quantity` em `products` para preço normalizado por unidade.
-- ⬜ 10.5 Testes unitário + integração da regra de substituição.
-- ⬜ 10.6 Executar validação (Skills → BP2, BP5).
+- [x] 10.1 Migração: `price_type varchar(16) NOT NULL DEFAULT 'regular'` com CHECK em `current_prices` e `price_history`.
+- [x] 10.2 Adicionar `priceType` a `PriceProps`/`Price` (default `regular`).
+- [x] 10.3 Documentar e aplicar a regra: promoção vai ao histórico e não substitui o preço regular comparável.
+- [x] 10.4 Adicionar `unit_measure`/`unit_quantity` em `products` para valor normalizado em unidade-base.
+- [x] 10.5 Testes unitário + integração da regra de substituição.
+- [x] 10.6 Executar validação (Skills → BP2, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
@@ -316,26 +316,26 @@ Trabalhar como **quatro itens independentes**, um por vez, cada um como módulo 
 
 **Arquivos:** `src/infrastructure/observability/*`, `src/infrastructure/queue/*`
 
-- ⬜ 12.1 Gauges: `outbox_backlog_events` (se ainda não existir via P1), `price_ingestion_lag_seconds` (idade do evento pendente desde `created_at`), `price_served_age_seconds` (idade dos preços em `compare`).
-- ⬜ 12.2 Propagar `traceparent` no payload da outbox e `trace.extract` no worker.
-- ⬜ 12.3 Painel Grafana: backlog, lag de ingestão e idade de preços.
-- ⬜ 12.4 Alertas Prometheus: backlog crescente por N minutos; lag acima de X.
-- ⬜ 12.5 Executar validação (Skills → BP6).
+- [x] 12.1 Gauges de backlog, idade do evento pendente mais antigo e idade das ofertas servidas.
+- [x] 12.2 Propagar `traceparent` no payload versionado da outbox e extrair o contexto no worker.
+- [x] 12.3 Painel Grafana: backlog, lag de ingestão e idade de preços.
+- [x] 12.4 Regras Prometheus para backlog crescente e lag acima do limite.
+- [x] 12.5 Executar validação (Skills → BP6).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 
 ### P15 — Detalhes menores
 
-- ⬜ 15.1 `main.ts`: injetar a mesma instância de `RedisCache` usada pelas rotas no shutdown (fechar a conexão real).
-- ⬜ 15.2 Separar portas de leitura/escrita (`PriceReader` / `PriceWriter`) quando `compareMany` (P7d) entrar.
-- ⬜ 15.3 `compare`: dedup por `chain` (ou limite por rede) para evitar uma rede ocupando as 100 ofertas.
-- ⬜ 15.4 Remover `userId` do `AppEnv` se P7c não for implementado em 90 dias.
-- ⬜ 15.5 DTO de fila explícito (não `PriceProps` como contrato de transporte).
-- ⬜ 15.6 Executar validação (Skills → SV1, BP1, BP3, BP5).
+- [x] 15.1 `main.ts` injeta a mesma instância de `RedisCache` usada pelas rotas e fecha essa conexão no shutdown.
+- [x] 15.2 Separar portas de leitura/escrita (`PriceReader` / `PriceWriter`).
+- [x] 15.3 `compare` deduplica por `chain`, selecionando a oferta mais barata por rede.
+- [x] 15.4 Manter `userId` em `AppEnv`: P7c está no PR separado e o rate limiting por usuário continua ativo.
+- [x] 15.5 DTO versionado explícito na outbox; payload legado continua suportado na transição.
+- [x] 15.6 Executar validação (Skills → SV1, BP1, BP3, BP5).
 
-**Status:** ⬜ A fazer — PR/Data: —
+**Status:** ✅ Concluído — `features` — 18/11/2026
 
 ---
 

@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, lt, min, ne, sql } from 'drizzle-orm';
 import {
   OUTBOX_LAST_ERROR_MAX_LENGTH,
   OUTBOX_MAX_ATTEMPTS,
@@ -97,5 +97,13 @@ export class DrizzleOutboxStore {
       .from(outboxEvents)
       .where(eq(outboxEvents.status, 'dead'));
     return row?.dead ?? 0;
+  }
+
+  async oldestPendingCreatedAt(): Promise<Date | null> {
+    const [row] = await db
+      .select({ createdAt: min(outboxEvents.createdAt) })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.status, 'pending'));
+    return row?.createdAt ?? null;
   }
 }
