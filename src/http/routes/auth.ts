@@ -1,13 +1,12 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
+import type { UserRepository } from '../../application/ports/user-repository.ts';
+import { AuthenticateUser } from '../../application/use-cases/authenticate-user.ts';
+import { RegisterUser } from '../../application/use-cases/register-user.ts';
+import { DomainError } from '../../domain/errors.ts';
 import type { AppEnv } from '../types.ts';
-import { eq } from 'drizzle-orm';
-import { db } from '../../infrastructure/database/client.ts';
-import { users } from '../../infrastructure/database/schema.ts';
-import { hashPassword, verifyPassword } from '../../infrastructure/auth/password.ts';
-import { signAccessToken } from '../../infrastructure/auth/jwt.ts';
 
 const Credentials = z
-  .object({ email: z.string().email().max(320), password: z.string().min(12).max(128) })
+  .object({ email: z.email().max(320), password: z.string().min(12).max(128) })
   .openapi('Credentials');
 const AuthResponse = z
   .object({ accessToken: z.string(), tokenType: z.literal('Bearer'), expiresIn: z.number() })
@@ -51,43 +50,45 @@ const loginRoute = createRoute({
   },
 });
 
-export const authRoutes = new OpenAPIHono<AppEnv>();
-authRoutes.openapi(registerRoute, async (context) => {
-  const input = context.req.valid('json');
-  const email = input.email.trim().toLowerCase();
-  try {
-    const [user] = await db
-      .insert(users)
-      .values({ email, passwordHash: await hashPassword(input.password) })
-      .returning({ id: users.id });
-    if (!user) throw new Error('Falha ao criar a conta.');
-    return context.json(
-      { accessToken: await signAccessToken(user.id), tokenType: 'Bearer' as const, expiresIn: 900 },
-      201,
-    );
-  } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505')
-      return context.json(
-        { error: { code: 'EMAIL_EXISTS', message: 'E-mail já cadastrado.' } },
-        409,
-      );
-    throw error;
-  }
-});
-authRoutes.openapi(loginRoute, async (context) => {
-  const input = context.req.valid('json');
-  const [user] = await db
-    .select({ id: users.id, passwordHash: users.passwordHash })
-    .from(users)
-    .where(eq(users.email, input.email.trim().toLowerCase()))
-    .limit(1);
-  if (!user || !(await verifyPassword(input.password, user.passwordHash)))
-    return context.json(
-      { error: { code: 'INVALID_CREDENTIALS', message: 'E-mail ou senha inválidos.' } },
-      401,
-    );
-  return context.json(
-    { accessToken: await signAccessToken(user.id), tokenType: 'Bearer' as const, expiresIn: 900 },
-    200,
+export function createAuthRoutes(dependencies: {
+  users: UserRepository;
+  hashPassword: (password: string) => Promise<string>;
+  verifyPassword: (password: string, hash: string) => Promise<boolean>;
+  signAccessToken: (userId: string) => Promise<string>;
+}) {
+  const register = new RegisterUser(
+    dependencies.users,
+    dependencies.hashPassword,
+    dependencies.signAccessToken,
   );
-});
+  const authenticate = new AuthenticateUser(
+    dependencies.users,
+    dependencies.verifyPassword,
+    dependencies.signAccessToken,
+  );
+  const routes = new OpenAPIHono<AppEnv>();
+
+  routes.openapi(registerRoute, async (context) => {
+    const input = context.req.valid('json');
+    try {
+      return context.json(await register.execute(input), 201);
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'EMAIL_EXISTS') {
+        return context.json({ error: { code: error.code, message: error.message } }, 409);
+      }
+      throw error;
+    }
+  });
+  routes.openapi(loginRoute, async (context) => {
+    try {
+      return context.json(await authenticate.execute(context.req.valid('json')), 200);
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'INVALID_CREDENTIALS') {
+        return context.json({ error: { code: error.code, message: error.message } }, 401);
+      }
+      throw error;
+    }
+  });
+
+  return routes;
+}

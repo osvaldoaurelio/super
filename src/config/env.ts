@@ -7,12 +7,13 @@ const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
-    DATABASE_URL: z.string().url().default('postgres://super:super@localhost:5432/super'),
-    REDIS_CACHE_URL: z.string().url().default('redis://localhost:6379/0'),
+    DATABASE_URL: z.url().default('postgres://super:super@localhost:5432/super'),
+    REDIS_CACHE_URL: z.url().default('redis://localhost:6379/0'),
     JWT_SECRET: z.string().min(32).default('dev-only-change-me-with-at-least-32-characters'),
     JWT_ISSUER: z.string().default('super-api'),
     JWT_AUDIENCE: z.string().default('super-api-clients'),
-    OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
+    OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+    METRICS_TOKEN: z.string().optional(),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
     RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   })

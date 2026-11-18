@@ -1,5 +1,5 @@
 import { logger } from '../observability/logger.ts';
-import { outboxBacklog, outboxDeadEvents } from '../observability/metrics.ts';
+import { outboxBacklog, outboxDeadEvents, priceIngestionLag } from '../observability/metrics.ts';
 import { DrizzleOutboxStore } from './drizzle-outbox-store.ts';
 import {
   createOutboxProcessorDeps,
@@ -19,11 +19,18 @@ export function stopOutboxWorker(): void {
 }
 
 export async function refreshOutboxMetrics(
-  store: Pick<DrizzleOutboxStore, 'countPending' | 'countDead'>,
+  store: Pick<DrizzleOutboxStore, 'countPending' | 'countDead' | 'oldestPendingCreatedAt'>,
 ): Promise<void> {
-  const [pending, dead] = await Promise.all([store.countPending(), store.countDead()]);
+  const [pending, dead, oldestPending] = await Promise.all([
+    store.countPending(),
+    store.countDead(),
+    store.oldestPendingCreatedAt(),
+  ]);
   outboxBacklog.set(pending);
   outboxDeadEvents.set(dead);
+  priceIngestionLag.set(
+    oldestPending ? Math.max(0, (Date.now() - oldestPending.getTime()) / 1000) : 0,
+  );
 }
 
 export async function runOutboxWorker(
@@ -34,6 +41,7 @@ export async function runOutboxWorker(
     try {
       const { claimed, retryableFailures } = await processPendingOutboxBatch(deps);
       const now = Date.now();
+      await deps.cache.set('worker:heartbeat', now, 30);
       if (now - lastMetricsRefresh >= METRICS_REFRESH_MS) {
         await refreshOutboxMetrics(new DrizzleOutboxStore());
         lastMetricsRefresh = now;

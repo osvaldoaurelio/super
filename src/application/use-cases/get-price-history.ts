@@ -1,9 +1,17 @@
 import type { Cache } from '../ports/cache.ts';
-import type { PriceHistoryPoint, PriceRepository } from '../ports/price-repository.ts';
+import type {
+  PriceHistoryCursor,
+  PriceHistoryPoint,
+  PriceReader,
+} from '../ports/price-repository.ts';
 
+export type PriceHistoryPage = {
+  points: PriceHistoryPoint[];
+  nextCursor?: PriceHistoryCursor;
+};
 export class GetPriceHistory {
   constructor(
-    private readonly repository: PriceRepository,
+    private readonly repository: PriceReader,
     private readonly cache: Cache,
   ) {}
 
@@ -11,19 +19,46 @@ export class GetPriceHistory {
     productId: string;
     days?: number;
     limit?: number;
-  }): Promise<PriceHistoryPoint[]> {
+    cursor?: PriceHistoryCursor;
+  }): Promise<PriceHistoryPage> {
     const days = input.days ?? 90;
     const limit = input.limit ?? 500;
     const version = (await this.cache.get<number>(`history:ver:${input.productId}`)) ?? 0;
-    const key = `history:v2:${input.productId}:${version}:${days}:${limit}`;
-    const cached = await this.cache.get<PriceHistoryPoint[]>(key);
-    if (cached) return cached;
-    const points = await this.repository.history(
+    const cursorKey = input.cursor
+      ? `${input.cursor.observedAt.toISOString()}:${input.cursor.id}`
+      : 'first';
+    const key = `history:v3:${input.productId}:${version}:${days}:${limit}:${cursorKey}`;
+    const cached = await this.cache.get<PriceHistoryPage>(key);
+    if (cached) {
+      return {
+        points: cached.points.map((point) => ({
+          ...point,
+          observedAt: new Date(`${point.observedAt}`),
+        })),
+        ...(cached.nextCursor
+          ? {
+              nextCursor: {
+                ...cached.nextCursor,
+                observedAt: new Date(`${cached.nextCursor.observedAt}`),
+              },
+            }
+          : {}),
+      };
+    }
+    const rows = await this.repository.history(
       input.productId,
       new Date(Date.now() - days * 86_400_000),
-      limit,
+      limit + 1,
+      input.cursor,
     );
-    await this.cache.set(key, points, 300);
-    return points;
+    const hasMore = rows.length > limit;
+    const points = hasMore ? rows.slice(0, limit) : rows;
+    const last = points.at(-1);
+    const page: PriceHistoryPage = {
+      points,
+      ...(hasMore && last ? { nextCursor: { observedAt: last.observedAt, id: last.id } } : {}),
+    };
+    await this.cache.set(key, page, 300);
+    return page;
   }
 }

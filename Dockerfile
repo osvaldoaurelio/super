@@ -13,7 +13,7 @@ FROM base AS runtime
 ENV NODE_ENV=production
 COPY --from=build --chown=bun:bun /app/package.json ./package.json
 COPY --from=build --chown=bun:bun /app/bun.lock ./bun.lock
-RUN bun install --production --frozen-lockfile
+RUN bun install --production --frozen-lockfile --ignore-scripts
 COPY --from=build --chown=bun:bun /app/src ./src
 COPY --from=build --chown=bun:bun /app/drizzle ./drizzle
 USER bun

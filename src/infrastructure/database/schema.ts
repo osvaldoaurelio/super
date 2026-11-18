@@ -5,6 +5,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -34,10 +35,27 @@ export const stores = pgTable(
     chain: varchar('chain', { length: 120 }).notNull(),
     city: varchar('city', { length: 120 }).notNull(),
     state: varchar('state', { length: 2 }).notNull(),
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
     active: boolean('active').default(true).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index('stores_location_idx').on(table.state, table.city)],
+  (table) => [
+    index('stores_location_idx').on(table.state, table.city),
+    index('stores_coordinates_idx').on(table.latitude, table.longitude),
+    check(
+      'stores_coordinates_pair_check',
+      sql`(${table.latitude} is null) = (${table.longitude} is null)`,
+    ),
+    check(
+      'stores_latitude_bounds_check',
+      sql`${table.latitude} is null or ${table.latitude} between -90 and 90`,
+    ),
+    check(
+      'stores_longitude_bounds_check',
+      sql`${table.longitude} is null or ${table.longitude} between -180 and 180`,
+    ),
+  ],
 );
 
 export const products = pgTable(
@@ -49,6 +67,11 @@ export const products = pgTable(
     brand: varchar('brand', { length: 120 }),
     category: varchar('category', { length: 120 }).notNull(),
     unit: varchar('unit', { length: 32 }).notNull(),
+    unitMeasure: varchar('unit_measure', { length: 16 })
+      .$type<'unit' | 'g' | 'ml'>()
+      .default('unit')
+      .notNull(),
+    unitQuantity: integer('unit_quantity').default(1).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -56,6 +79,34 @@ export const products = pgTable(
       .on(table.gtin)
       .where(sql`${table.gtin} is not null`),
     index('products_category_name_idx').on(table.category, table.name),
+    index('products_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
+    index('products_brand_trgm_idx').using('gin', table.brand.op('gin_trgm_ops')),
+    check('products_unit_measure_valid', sql`${table.unitMeasure} in ('unit', 'g', 'ml')`),
+    check('products_unit_quantity_positive', sql`${table.unitQuantity} > 0`),
+  ],
+);
+
+export const alerts = pgTable(
+  'alerts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    targetPriceCents: integer('target_price_cents').notNull(),
+    active: boolean('active').default(true).notNull(),
+    channel: varchar('channel', { length: 16 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    triggeredAt: timestamp('triggered_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('alerts_user_created_idx').on(table.userId, table.createdAt),
+    index('alerts_product_active_idx').on(table.productId, table.active),
+    check('alerts_target_price_positive', sql`${table.targetPriceCents} > 0`),
+    check('alerts_channel_valid', sql`${table.channel} in ('email', 'push')`),
   ],
 );
 
@@ -70,6 +121,10 @@ export const currentPrices = pgTable(
       .notNull()
       .references(() => stores.id),
     priceCents: integer('price_cents').notNull(),
+    priceType: varchar('price_type', { length: 16 })
+      .$type<'regular' | 'promo'>()
+      .default('regular')
+      .notNull(),
     currency: varchar('currency', { length: 3 }).default('BRL').notNull(),
     observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -77,7 +132,9 @@ export const currentPrices = pgTable(
   (table) => [
     uniqueIndex('current_prices_product_store_unique').on(table.productId, table.storeId),
     index('current_prices_product_price_idx').on(table.productId, table.priceCents),
+    index('current_prices_store_product_idx').on(table.storeId, table.productId),
     check('current_prices_positive', sql`${table.priceCents} > 0`),
+    check('current_prices_price_type_valid', sql`${table.priceType} in ('regular', 'promo')`),
   ],
 );
 
@@ -93,6 +150,10 @@ export const priceHistory = pgTable(
       .notNull()
       .references(() => stores.id),
     priceCents: integer('price_cents').notNull(),
+    priceType: varchar('price_type', { length: 16 })
+      .$type<'regular' | 'promo'>()
+      .default('regular')
+      .notNull(),
     observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
     source: varchar('source', { length: 64 }).notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
@@ -104,6 +165,7 @@ export const priceHistory = pgTable(
     index('price_history_product_time_idx').on(table.productId, table.observedAt),
     index('price_history_store_time_idx').on(table.storeId, table.observedAt),
     check('price_history_positive', sql`${table.priceCents} > 0`),
+    check('price_history_price_type_valid', sql`${table.priceType} in ('regular', 'promo')`),
   ],
 );
 

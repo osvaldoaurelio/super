@@ -2,6 +2,8 @@ import { DomainError } from '../errors.ts';
 
 export const PRICE_FRESHNESS_WINDOW_DAYS = 30;
 
+export type PriceType = 'regular' | 'promo';
+
 const MAX_FUTURE_OBSERVATION_MS = 5 * 60 * 1_000;
 const MAX_OBSERVATION_AGE_MS = 365 * 24 * 60 * 60 * 1_000;
 
@@ -9,13 +11,14 @@ export type PriceProps = {
   productId: string;
   storeId: string;
   priceCents: number;
+  priceType?: PriceType;
   observedAt: Date;
   source: string;
   idempotencyKey: string;
 };
 
 export class Price {
-  private constructor(readonly props: PriceProps) {}
+  private constructor(readonly props: Omit<PriceProps, 'priceType'> & { priceType: PriceType }) {}
 
   static create(props: PriceProps): Price {
     if (!Number.isSafeInteger(props.priceCents) || props.priceCents <= 0) {
@@ -44,6 +47,10 @@ export class Price {
         'MISSING_PRICE_FIELDS',
       );
     }
-    return new Price({ ...props, observedAt: new Date(props.observedAt) });
+    return new Price({
+      ...props,
+      priceType: props.priceType ?? 'regular',
+      observedAt: new Date(props.observedAt),
+    });
   }
 }

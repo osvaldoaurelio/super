@@ -2,6 +2,7 @@ import { closeDatabase } from './infrastructure/database/client.ts';
 import { RedisCache } from './infrastructure/cache/redis-cache.ts';
 import { DrizzlePriceRepository } from './infrastructure/database/price-repository-drizzle.ts';
 import { DrizzleOutboxStore } from './infrastructure/queue/drizzle-outbox-store.ts';
+import { DrizzlePriceAlertRepository } from './infrastructure/database/price-alert-repository-drizzle.ts';
 import { runOutboxWorker, stopOutboxWorker } from './infrastructure/queue/outbox-worker.ts';
 import { logger } from './infrastructure/observability/logger.ts';
 import { startTracing, stopTracing } from './infrastructure/observability/tracing.ts';
@@ -11,6 +12,7 @@ const cache = new RedisCache();
 const worker = runOutboxWorker({
   store: new DrizzleOutboxStore(),
   repository: new DrizzlePriceRepository(),
+  alerts: new DrizzlePriceAlertRepository(),
   cache,
   now: () => new Date(),
 }).catch((error: unknown) => logger.fatal({ err: error }, 'outbox_worker_stopped'));

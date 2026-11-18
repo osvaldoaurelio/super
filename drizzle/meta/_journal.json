@@ -36,6 +36,34 @@
       "when": 1794701774364,
       "tag": "0004_source_scoped_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794715631606,
+      "tag": "0005_product_search_trgm",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794774727131,
+      "tag": "0006_tiny_viper",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794854322556,
+      "tag": "0007_smiling_viper",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794977525931,
+      "tag": "0008_whole_pride",
+      "breakpoints": true
     }
   ]
 }

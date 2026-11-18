@@ -85,8 +85,12 @@ flowchart LR
 
 - `POST /api/v1/auth/register` — cria conta e retorna JWT de acesso (15 min).
 - `POST /api/v1/auth/login` — autentica e retorna JWT de acesso.
-- `GET /api/v1/prices/{productId}/compare?city=São%20Paulo&state=SP` — ofertas atuais em ordem crescente, moeda BRL e valores inteiros em centavos.
-- `GET /api/v1/prices/{productId}/history?days=90&limit=500` — observações recentes, limitadas.
+- `GET /api/v1/prices/{productId}/compare?city=São%20Paulo&state=SP&limit=50` — menor preço atual por rede, em ordem crescente; `limit` de 1–100 (padrão 100).
+- `GET /api/v1/prices/{productId}/history?days=90&limit=500&cursor=...` — observações recentes em páginas estáveis; `meta.nextCursor` continua a consulta sem repetição.
+- `GET /api/v1/products/search?q=leite&limit=20&cursor=...` — busca aproximada por nome e marca, ordenada por relevância; `q` aceita 3–120 caracteres, `limit` de 1–50 (padrão 20) e o cursor é vinculado à consulta.
+- `GET /api/v1/stores/nearby?lat=-23.55&lng=-46.63&radiusKm=5&limit=20` — lojas ativas dentro de 0,1–50 km, ordenadas por distância; `limit` de 1–50 (padrão 20).
+- `GET/POST /api/v1/alerts` e `PATCH/DELETE /api/v1/alerts/{alertId}` — CRUD autenticado e isolado pelo usuário do JWT; canais aceitos: `email` e `push`.
+- `POST /api/v1/baskets/compare` — recebe `{ "productIds": ["..."], "city": "...", "state": "SP" }`, totaliza uma unidade de cada produto e ordena lojas com todos os preços atuais disponíveis.
 - `POST /api/v1/prices` — requer Bearer JWT e `Idempotency-Key: <UUID>`; retorna 202 após gravar na outbox, não após concluir o trabalho.
 - `GET /health/live`, `GET /health/ready`, `GET /metrics`, `GET /openapi.json`, `GET /docs`.
 
@@ -106,11 +110,16 @@ Content-Type: application/json
 ## Modelo de dados
 
 - **users**: e-mail canônico, hash scrypt, data de criação.
-- **products**: GTIN opcional (único quando preenchido), nome, marca, categoria e unidade.
-- **stores**: cadeia e localização; índice `(state, city)`.
-- **current_prices**: uma linha por `(product_id, store_id)`; índice `(product_id, price_cents)` para comparação ordenada e índice de unicidade do par.
-- **price_history**: observações imutáveis, centavos, origem e data; PK composta `(observed_at, id)`, índices `(product_id, observed_at)` e `(store_id, observed_at)`.
-- **outbox_events**: evento JSON, chave de idempotência única e estado (`pending`, `processed` ou `dead`); `attempts` e `last_error` registram falhas de processamento e a DLQ guarda falhas permanentes.
+- **products**: GTIN opcional (único quando preenchido), nome, marca, categoria, unidade de exibição e quantidade normalizada em uma unidade-base (`unit`, `g` ou `ml`); busca aproximada acelerada por índices GIN `pg_trgm` em nome e marca.
+- **stores**: cadeia, cidade/UF e coordenadas opcionais; índices `(state, city)` e `(latitude, longitude)`. A busca próxima pré-filtra por bounding box e calcula distância esférica exata, sem exigir PostGIS.
+- **current_prices**: uma linha por `(product_id, store_id)` e apenas preço regular; índices `(product_id, price_cents)` e `(store_id, product_id)`, além da unicidade do par.
+- **price_history**: observações imutáveis com tipo regular/promocional, centavos, origem e data; PK composta `(observed_at, id)` fornece ordenação estável para keyset pagination.
+- **outbox_events**: evento JSON versionado, chave de idempotência única e estado (`pending`, `processed` ou `dead`); `attempts` e `last_error` registram falhas de processamento e a DLQ guarda falhas permanentes.
+- **alerts**: regra de preço-alvo por usuário/produto; ao cruzar o valor para baixo, o worker desativa o alerta e publica `price.alert.triggered` na outbox com o canal escolhido. A entrega por e-mail/push exige consumidor e provedor externos.
+
+`unit_quantity` representa a quantidade inteira em `unit_measure`: peças (`unit`), gramas (`g`) ou mililitros (`ml`). A API retorna esses campos na busca de produtos; os dados de catálogo devem ser normalizados na gravação. Os registros antigos recebem os valores seguros `unit`/`1` pela migração, sem inferência a partir do texto livre de `unit`.
+
+`drizzle/0001_initial.sql` é um artefato histórico não referenciado pelo journal atual; a sequência executável começa nas entradas de `drizzle/meta/_journal.json`. Não edite nem reaplique esse arquivo. Alterações de schema devem passar por `schema.ts` e por uma nova migração gerada/revisada; SQL manual só é permitido com justificativa operacional explícita (por exemplo, índice `CONCURRENTLY`).
 
 Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma agregação eventual: é atualizada na mesma transação que a inserção do histórico. Observações mais antigas não substituem o valor atual; comparações só retornam preços observados nos últimos 30 dias. A ingestão rejeita observações com mais de 5 minutos no futuro ou mais de 365 dias. A outbox e a gravação do histórico compartilham o PostgreSQL; o worker processa até 200 eventos por transação com `FOR UPDATE SKIP LOCKED`, e a chave idempotente protege contra reprocessamento.
 
@@ -119,10 +128,10 @@ Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma 
 1. **Monólito modular, não microserviços:** um domínio e um deploy fáceis de operar no MVP; portas explícitas deixam banco, cache e fila substituíveis. API e worker já escalam separadamente.
 2. **Clean Architecture / SOLID:** domínio sem framework; casos de uso dependem de interfaces; Drizzle/Redis são adaptadores. Hono faz parsing, validação e tradução HTTP. Mantenha a composição de dependências na borda ao ampliar módulos.
 3. **DDD leve:** `Price` contém as invariantes que realmente importam (preço positivo em centavos, data e identificadores válidos); Product e Store permanecem entidades relacionais simples até surgir comportamento próprio.
-4. **Consulta quente curta:** comparação lê o snapshot `current_prices`, com filtro por produto/local e ordenação apoiada por índice; não varre o histórico. Resposta limitada a 100 ofertas.
-5. **Histórico de milhões de linhas:** índice por produto e data; intervalo de consulta limitado, payload projetado e paginação/limite. Métricas de `EXPLAIN (ANALYZE, BUFFERS)` e volume determinam quando habilitar partições mensais por `observed_at`, retenção/arquivamento e ingestão em lote. Planeje a tabela particionada e unicidade local conscientemente: no PostgreSQL, índices únicos de tabelas particionadas normalmente precisam incluir a chave de partição; mantenha deduplicação global na outbox ou adote tabela de idempotência dedicada antes dessa migração.
+4. **Consulta quente curta:** comparação lê o snapshot `current_prices`, com filtro por produto/local e ordenação apoiada por índice; não varre o histórico. Retorna até 100 ofertas e uma por rede, escolhendo a loja mais barata de cada rede.
+5. **Histórico de milhões de linhas:** índice por produto e data; intervalo de consulta limitado, payload projetado e paginação keyset por `(observed_at, id)`. Métricas de `EXPLAIN (ANALYZE, BUFFERS)` e volume determinam quando habilitar partições mensais por `observed_at`, retenção/arquivamento e ingestão em lote. Planeje a tabela particionada e unicidade local conscientemente: no PostgreSQL, índices únicos de tabelas particionadas normalmente precisam incluir a chave de partição; mantenha deduplicação global na outbox ou adote tabela de idempotência dedicada antes dessa migração.
 6. **Cache Redis:** cache usa `allkeys-lru` sem persistência. É best-effort, curto (60 s comparação, 300 s histórico), namespaced/versionado e invalidado após persistência. TTL limita inconsistências se invalidação falhar.
-7. **Outbox:** payload validado com Zod pelo worker, processamento em lotes com locks `SKIP LOCKED` e gravação atômica de histórico, snapshot e estado do evento. Falhas permanentes (payload/regra inválidos ou FK inexistente) são marcadas `dead`, sem retry automático. Falhas transitórias incrementam `attempts`; após 10 tentativas o evento permanece pendente para replay operacional. `outbox_dead_events` e `outbox_dead_lettered_total` expõem a DLQ; `outbox_backlog_events` e `outbox_processing_failures_total` acompanham backlog e falhas. Para replay manual, corrija a causa e, com autorização operacional, reative o evento:
+7. **Outbox:** DTO versionado validado com Zod pelo worker, propagação de `traceparent`, processamento em lotes com locks `SKIP LOCKED` e gravação atômica de histórico, snapshot e estado do evento. Payload legado pendente continua aceito durante a transição. `PriceRecorded` e alertas disparados também são persistidos; `price.alert.triggered` aguarda o consumidor de entrega e não é consumido pelo worker de preços. Falhas permanentes (payload/regra inválidos ou FK inexistente) são marcadas `dead`, sem retry automático. Falhas transitórias incrementam `attempts`; após 10 tentativas o evento permanece pendente para replay operacional. `outbox_dead_events` e `outbox_dead_lettered_total` expõem a DLQ; `outbox_backlog_events` e `outbox_processing_failures_total` acompanham backlog e falhas. Para replay manual, corrija a causa e, com autorização operacional, reative o evento:
 
    ```sql
    UPDATE outbox_events
@@ -134,19 +143,19 @@ Centavos inteiros evitam erros de ponto flutuante. `current_prices` não é uma 
    O PostgreSQL é a fonte durável da fila e a entrega é at-least-once.
 
 8. **Auth:** token JWT curto HS256 com emissor/audiência validados; segredo mínimo de 32 caracteres fora do código. Senha usa scrypt e comparação em tempo constante. Em produção, preferir chaves assimétricas/rotação, refresh revogável, rate limiting e controles de abuso.
-9. **Observabilidade:** Pino JSON remove autorização/senhas; request-id correlaciona logs; OTel exporta traces OTLP quando configurado; Prometheus expõe séries de baixa cardinalidade (sem IDs individuais). Collector de exemplo exporta traces no log/debug, suficiente localmente — substitua por backend durável.
+9. **Observabilidade:** Pino JSON remove autorização/senhas; request-id correlaciona logs; OTel exporta traces OTLP quando configurado; Prometheus expõe séries de baixa cardinalidade (sem IDs individuais), incluindo backlog/idade de ingestão e idade das ofertas. O dashboard Grafana exibe essas métricas e Prometheus avalia alertas de backlog crescente e atraso. Configure um Alertmanager/receiver no deploy para entrega de notificações. `/health/worker` usa heartbeat Redis com limite de 60 s; `/health/ready` verifica PostgreSQL e Redis.
 10. **Operação:** migração executada como etapa única, healthcheck de readiness, containers não-root/read-only e Compose focado em desenvolvimento. Produção demanda TLS, secrets, backups, pooling/limites de conexões, alertas, HA e revisão de segurança.
 
 ## Testes
 
-- Unitários: invariantes de `Price`, schema de payload, cache-hit/miss, JWT/hash de senha e comportamento HTTP.
-- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot/histórico, frescor, rejeição de FK, processamento em batch e idempotência da outbox; CI provisiona Postgres.
+- Unitários: invariantes de `Price`, schema de payload, cache-hit/miss, totalização da cesta, JWT/hash de senha e comportamento HTTP.
+- Integração (`RUN_INTEGRATION=1`): contra PostgreSQL real para snapshot/histórico, frescor, alertas, comparação multi-produto, rejeição de FK, processamento em batch e idempotência da outbox; CI provisiona Postgres.
 - E2E: percorre a aplicação HTTP Hono por `app.request` sem abrir socket, validando OpenAPI, validação e proteção JWT. Para testes de socket/infra ponta a ponta, iniciar o Compose e exercitar o endpoint publicado num job de release.
 
 ## Roadmap
 
 - **MVP:** catálogo/lojas por seed e gestão autenticada, comparação, histórico, ingestão via outbox PostgreSQL, JWT, cache, métricas e deploy Compose; contratos atuais implementam o núcleo de preços e cadastro/autenticação inicial.
-- **V2:** APIs administrativas completas para catálogo/lojas, fontes de preço com importação bulk e dead-letter/replay, busca textual (trigram/FTS), paginação por cursor, alertas/listas de compras, refresh token e rate limiting; avaliar partição mensal, read replicas e CDN conforme telemetria.
+- **V2:** APIs administrativas completas para catálogo/lojas, fontes de preço com importação bulk e dead-letter/replay, paginação por cursor, listas de compras, entrega externa de alertas, refresh token e rate limiting; avaliar partição mensal, read replicas e CDN conforme telemetria.
 - **V3:** múltiplas regiões/tenants, eventos de domínio para integrações, analytics/OLAP separado, previsão/qualidade de preços, políticas de retenção/arquivamento e particionamento distribuído só se o crescimento comprovado exigir.
 
 ## Convenções

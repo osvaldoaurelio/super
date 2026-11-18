@@ -6,6 +6,7 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     testTimeout: 15_000,
     hookTimeout: 15_000,
+    server: { deps: { inline: ['zod'] } },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

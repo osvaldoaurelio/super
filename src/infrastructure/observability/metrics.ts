@@ -37,3 +37,13 @@ export const outboxProcessingFailures = new Counter({
   labelNames: ['outcome'] as const,
   registers: [metricsRegistry],
 });
+export const priceIngestionLag = new Gauge({
+  name: 'price_ingestion_lag_seconds',
+  help: 'Idade do evento de preço pendente mais antigo',
+  registers: [metricsRegistry],
+});
+export const priceServedAge = new Gauge({
+  name: 'price_served_age_seconds',
+  help: 'Idade máxima das ofertas retornadas pela última comparação',
+  registers: [metricsRegistry],
+});

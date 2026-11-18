@@ -8,10 +8,30 @@ export type PriceOffer = {
   priceCents: number;
   observedAt: Date;
 };
-export type PriceHistoryPoint = { priceCents: number; observedAt: Date };
+export type PriceHistoryPoint = {
+  id: string;
+  priceCents: number;
+  priceType: 'regular' | 'promo';
+  observedAt: Date;
+};
+export type PriceHistoryCursor = { observedAt: Date; id: string };
 
-export interface PriceRepository {
-  compare(productId: string, location?: { city?: string; state?: string }): Promise<PriceOffer[]>;
-  history(productId: string, since: Date, limit: number): Promise<PriceHistoryPoint[]>;
+export interface PriceReader {
+  compare(
+    productId: string,
+    location?: { city?: string; state?: string },
+    limit?: number,
+  ): Promise<PriceOffer[]>;
+  history(
+    productId: string,
+    since: Date,
+    limit: number,
+    cursor?: PriceHistoryCursor,
+  ): Promise<PriceHistoryPoint[]>;
+}
+
+export interface PriceWriter {
   record(price: Price): Promise<void>;
 }
+
+export interface PriceRepository extends PriceReader, PriceWriter {}
