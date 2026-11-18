@@ -5,6 +5,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -34,10 +35,27 @@ export const stores = pgTable(
     chain: varchar('chain', { length: 120 }).notNull(),
     city: varchar('city', { length: 120 }).notNull(),
     state: varchar('state', { length: 2 }).notNull(),
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
     active: boolean('active').default(true).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index('stores_location_idx').on(table.state, table.city)],
+  (table) => [
+    index('stores_location_idx').on(table.state, table.city),
+    index('stores_coordinates_idx').on(table.latitude, table.longitude),
+    check(
+      'stores_coordinates_pair_check',
+      sql`(${table.latitude} is null) = (${table.longitude} is null)`,
+    ),
+    check(
+      'stores_latitude_bounds_check',
+      sql`${table.latitude} is null or ${table.latitude} between -90 and 90`,
+    ),
+    check(
+      'stores_longitude_bounds_check',
+      sql`${table.longitude} is null or ${table.longitude} between -180 and 180`,
+    ),
+  ],
 );
 
 export const products = pgTable(
@@ -58,6 +76,30 @@ export const products = pgTable(
     index('products_category_name_idx').on(table.category, table.name),
     index('products_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
     index('products_brand_trgm_idx').using('gin', table.brand.op('gin_trgm_ops')),
+  ],
+);
+
+export const alerts = pgTable(
+  'alerts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    targetPriceCents: integer('target_price_cents').notNull(),
+    active: boolean('active').default(true).notNull(),
+    channel: varchar('channel', { length: 16 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    triggeredAt: timestamp('triggered_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('alerts_user_created_idx').on(table.userId, table.createdAt),
+    index('alerts_product_active_idx').on(table.productId, table.active),
+    check('alerts_target_price_positive', sql`${table.targetPriceCents} > 0`),
+    check('alerts_channel_valid', sql`${table.channel} in ('email', 'push')`),
   ],
 );
 

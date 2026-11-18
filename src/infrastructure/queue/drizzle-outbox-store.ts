@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, lt, ne, sql } from 'drizzle-orm';
 import {
   OUTBOX_LAST_ERROR_MAX_LENGTH,
   OUTBOX_MAX_ATTEMPTS,
@@ -25,11 +25,29 @@ export class DrizzleOutboxStore {
       })
       .from(outboxEvents)
       .where(
-        and(eq(outboxEvents.status, 'pending'), lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS)),
+        and(
+          eq(outboxEvents.status, 'pending'),
+          lt(outboxEvents.attempts, OUTBOX_MAX_ATTEMPTS),
+          ne(outboxEvents.type, 'price.alert.triggered'),
+        ),
       )
       .orderBy(asc(outboxEvents.createdAt))
       .limit(limit)
       .for('update', { skipLocked: true });
+  }
+
+  async publish(
+    tx: DatabaseTransaction,
+    type: string,
+    payload: unknown,
+    idempotencyKey: string,
+  ): Promise<void> {
+    await tx
+      .insert(outboxEvents)
+      .values({ type, payload, idempotencyKey })
+      .onConflictDoNothing({
+        target: [outboxEvents.type, outboxEvents.idempotencyKey],
+      });
   }
 
   async markProcessed(tx: DatabaseTransaction, eventId: string, processedAt: Date): Promise<void> {
