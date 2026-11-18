@@ -7,6 +7,7 @@ import type {
 import { PRICE_FRESHNESS_WINDOW_DAYS, type Price } from '../../domain/prices/price.ts';
 import { db, type DatabaseTransaction } from './client.ts';
 import { currentPrices, priceHistory, stores } from './schema.ts';
+import type { PriceRecordedEvent } from '../queue/price-recorded.ts';
 
 export class DrizzlePriceRepository implements PriceRepository {
   async compare(
@@ -52,7 +53,23 @@ export class DrizzlePriceRepository implements PriceRepository {
     await db.transaction((tx) => this.recordInTransaction(tx, price));
   }
 
-  async recordInTransaction(tx: DatabaseTransaction, price: Price): Promise<void> {
+  async recordInTransaction(
+    tx: DatabaseTransaction,
+    price: Price,
+  ): Promise<PriceRecordedEvent | null> {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${price.props.productId}), hashtext(${price.props.storeId}))`,
+    );
+    const [previous] = await tx
+      .select({ priceCents: currentPrices.priceCents })
+      .from(currentPrices)
+      .where(
+        and(
+          eq(currentPrices.productId, price.props.productId),
+          eq(currentPrices.storeId, price.props.storeId),
+        ),
+      )
+      .for('update');
     const [inserted] = await tx
       .insert(priceHistory)
       .values({
@@ -67,8 +84,8 @@ export class DrizzlePriceRepository implements PriceRepository {
         target: [priceHistory.source, priceHistory.idempotencyKey],
       })
       .returning({ id: priceHistory.id });
-    if (!inserted) return;
-    await tx
+    if (!inserted) return null;
+    const [updated] = await tx
       .insert(currentPrices)
       .values({
         productId: price.props.productId,
@@ -84,6 +101,15 @@ export class DrizzlePriceRepository implements PriceRepository {
           updatedAt: new Date(),
         },
         setWhere: gt(sql`excluded.observed_at`, currentPrices.observedAt),
-      });
+      })
+      .returning({ priceCents: currentPrices.priceCents });
+    return {
+      productId: price.props.productId,
+      storeId: price.props.storeId,
+      previousPriceCents: previous?.priceCents ?? null,
+      priceCents: price.props.priceCents,
+      currentPriceUpdated: updated !== undefined,
+      observedAt: price.props.observedAt.toISOString(),
+    };
   }
 }

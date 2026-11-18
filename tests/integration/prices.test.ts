@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../src/infrastructure/database/client.ts';
 import {
   currentPrices,
@@ -14,12 +14,14 @@ import { DrizzlePriceRepository } from '../../src/infrastructure/database/price-
 import { OutboxPriceQueue } from '../../src/infrastructure/queue/outbox-price-queue.ts';
 import { DrizzleOutboxStore } from '../../src/infrastructure/queue/drizzle-outbox-store.ts';
 import { processPendingOutboxBatch } from '../../src/infrastructure/queue/outbox-processor.ts';
+import { DrizzlePriceAlertRepository } from '../../src/infrastructure/database/price-alert-repository-drizzle.ts';
 import { runIntegrationSetup } from '../support/integration-setup.ts';
 
 const describeIntegration = process.env['RUN_INTEGRATION'] === '1' ? describe : describe.skip;
 describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
   const repository = new DrizzlePriceRepository();
   const outbox = new DrizzleOutboxStore();
+  const alertsRepository = new DrizzlePriceAlertRepository();
   let productId = '';
   let storeId = '';
   let staleStoreId = '';
@@ -39,6 +41,18 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     storeId = store.id;
   });
   afterAll(async () => {
+    if (outboxIds.length) {
+      const recordedEvents = await db
+        .select({ id: outboxEvents.id })
+        .from(outboxEvents)
+        .where(
+          and(
+            eq(outboxEvents.type, 'price.recorded'),
+            inArray(outboxEvents.idempotencyKey, outboxIds),
+          ),
+        );
+      outboxIds.push(...recordedEvents.map((event) => event.id));
+    }
     if (productId) {
       await db.delete(currentPrices).where(eq(currentPrices.productId, productId));
       await db.delete(priceHistory).where(eq(priceHistory.productId, productId));
@@ -157,6 +171,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       processPendingOutboxBatch({
         store: outbox,
         repository,
+        alerts: alertsRepository,
         cache: { bumpVersion: async () => 1 },
         now: () => new Date(),
       }),
@@ -192,11 +207,12 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     const deps = {
       store: outbox,
       repository,
+      alerts: alertsRepository,
       cache: { bumpVersion: async () => 1 },
       now: () => new Date(),
     };
 
-    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 1 });
+    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 2 });
     await db
       .update(outboxEvents)
       .set({ status: 'pending', processedAt: null, attempts: 0 })
@@ -241,6 +257,16 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       processPendingOutboxBatch({
         store: outbox,
         repository,
+        alerts: alertsRepository,
+        cache: { bumpVersion: async () => 1 },
+        now: () => new Date(),
+      }),
+    ).resolves.toMatchObject({ claimed: 3 });
+    await expect(
+      processPendingOutboxBatch({
+        store: outbox,
+        repository,
+        alerts: alertsRepository,
         cache: { bumpVersion: async () => 1 },
         now: () => new Date(),
       }),
@@ -280,6 +306,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
             throw new Error('Falha temporária de persistência.');
           },
         },
+        alerts: alertsRepository,
         cache: { bumpVersion: async () => 1 },
         now: () => new Date(),
       }),
@@ -327,11 +354,13 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     const deps = {
       store: outbox,
       repository,
+      alerts: alertsRepository,
       cache: { bumpVersion: async () => 1 },
       now: () => new Date(),
     };
 
     await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 200 });
-    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 1 });
+    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 200 });
+    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 2 });
   });
 });

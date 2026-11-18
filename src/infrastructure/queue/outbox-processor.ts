@@ -9,6 +9,8 @@ import { outboxDeadLettered, outboxProcessingFailures } from '../observability/m
 import { db } from '../database/client.ts';
 import { DrizzlePriceRepository } from '../database/price-repository-drizzle.ts';
 import { DrizzleOutboxStore } from './drizzle-outbox-store.ts';
+import { PriceRecordedSchema } from './price-recorded.ts';
+import { DrizzlePriceAlertRepository } from '../database/price-alert-repository-drizzle.ts';
 import { type OutboxEvent, type OutboxFailureOutcome } from './outbox-types.ts';
 
 export const OUTBOX_BATCH_SIZE = 200;
@@ -19,14 +21,18 @@ export type OutboxBatchResult = {
 };
 
 export type OutboxProcessorDeps = {
-  store: Pick<DrizzleOutboxStore, 'claimPending' | 'markProcessed' | 'markFailed' | 'markDead'>;
+  store: Pick<
+    DrizzleOutboxStore,
+    'claimPending' | 'markProcessed' | 'markFailed' | 'markDead' | 'publish'
+  >;
   repository: Pick<DrizzlePriceRepository, 'recordInTransaction'>;
+  alerts: Pick<DrizzlePriceAlertRepository, 'evaluatePriceRecorded'>;
   cache: Pick<Cache, 'bumpVersion'>;
   now: () => Date;
 };
 
 type EventOutcome =
-  | { kind: 'processed'; event: OutboxEvent; productId: string }
+  | { kind: 'processed'; event: OutboxEvent; productId?: string }
   | { kind: 'dead'; event: OutboxEvent; error: unknown }
   | {
       kind: 'failed';
@@ -88,6 +94,13 @@ function parseEvent(event: OutboxEvent): ReturnType<typeof Price.create> {
   return Price.create(PricePropsSchema.parse(event.payload));
 }
 
+function parsePriceRecordedEvent(event: OutboxEvent) {
+  if (event.type !== 'price.recorded') {
+    throw new PermanentOutboxError(`Tipo de evento de outbox não suportado: ${event.type}`);
+  }
+  return PriceRecordedSchema.parse(event.payload);
+}
+
 export async function processPendingOutboxBatch(
   deps: OutboxProcessorDeps = createOutboxProcessorDeps(),
   limit = OUTBOX_BATCH_SIZE,
@@ -98,12 +111,24 @@ export async function processPendingOutboxBatch(
 
     for (const event of events) {
       try {
-        const price = parseEvent(event);
-        await tx.transaction(async (eventTx) => {
-          await deps.repository.recordInTransaction(eventTx, price);
+        const productId = await tx.transaction(async (eventTx) => {
+          if (event.type === 'price.record') {
+            const price = parseEvent(event);
+            const recorded = await deps.repository.recordInTransaction(eventTx, price);
+            if (recorded) {
+              await deps.store.publish(eventTx, 'price.recorded', recorded, event.id);
+            }
+            await deps.store.markProcessed(eventTx, event.id, deps.now());
+            return price.props.productId;
+          }
+
+          const recorded = parsePriceRecordedEvent(event);
+          await deps.alerts.evaluatePriceRecorded(eventTx, event.id, recorded, deps.now());
           await deps.store.markProcessed(eventTx, event.id, deps.now());
+          return undefined;
         });
-        results.push({ kind: 'processed', event, productId: price.props.productId });
+        if (productId) results.push({ kind: 'processed', event, productId });
+        else results.push({ kind: 'processed', event });
       } catch (error) {
         if (isPermanentPriceError(error)) {
           const marked = await deps.store.markDead(tx, event.id, errorMessage(error));
@@ -128,7 +153,7 @@ export async function processPendingOutboxBatch(
   const successfulProductIds = new Set<string>();
   for (const outcome of outcomes) {
     if (outcome.kind === 'processed') {
-      successfulProductIds.add(outcome.productId);
+      if (outcome.productId) successfulProductIds.add(outcome.productId);
       continue;
     }
     if (outcome.kind === 'dead') {
@@ -181,6 +206,7 @@ export function createOutboxProcessorDeps(): OutboxProcessorDeps {
   return {
     store: new DrizzleOutboxStore(),
     repository: new DrizzlePriceRepository(),
+    alerts: new DrizzlePriceAlertRepository(),
     cache: new RedisCache(),
     now: () => new Date(),
   };

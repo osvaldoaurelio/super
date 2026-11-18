@@ -21,6 +21,16 @@ import type { AppEnv } from './types.ts';
 import { createRateLimitMiddleware, type RateLimitCounter } from './middleware/rate-limit.ts';
 import type { PriceJobQueue } from '../application/ports/price-job-queue.ts';
 import type { ProductSearch } from '../application/ports/product-search.ts';
+import type { StoreLocator } from '../application/ports/store-locator.ts';
+import { DrizzleStoreLocator } from '../infrastructure/database/store-locator-drizzle.ts';
+import { createStoreRoutes } from './routes/stores.ts';
+import { createAlertRoutes } from './routes/alerts.ts';
+import { createBasketRoutes } from './routes/baskets.ts';
+import type { PriceAlertRepository } from '../application/ports/price-alert-repository.ts';
+import { DrizzlePriceAlertRepository } from '../infrastructure/database/price-alert-repository-drizzle.ts';
+import type { BasketPriceReader } from '../application/ports/basket-price-reader.ts';
+import { DrizzleBasketPriceReader } from '../infrastructure/database/basket-price-reader-drizzle.ts';
+import type { Cache } from '../application/ports/cache.ts';
 
 type CreateAppOptions = {
   rateLimitCounter?: RateLimitCounter;
@@ -28,12 +38,17 @@ type CreateAppOptions = {
   rateLimitWindowSeconds?: number;
   priceQueue?: PriceJobQueue;
   productSearch?: ProductSearch;
+  storeLocator?: StoreLocator;
+  priceAlertRepository?: PriceAlertRepository;
+  basketPriceReader?: BasketPriceReader;
+  cache?: Cache;
 };
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = new OpenAPIHono<AppEnv>();
-  const cache = new RedisCache();
-  const rateLimitCounter = options.rateLimitCounter ?? cache;
+  const defaultCache = new RedisCache();
+  const cache = options.cache ?? defaultCache;
+  const rateLimitCounter = options.rateLimitCounter ?? defaultCache;
   const rateLimitMax = options.rateLimitMax ?? env.RATE_LIMIT_MAX;
   const rateLimitWindowSeconds = options.rateLimitWindowSeconds ?? env.RATE_LIMIT_WINDOW_SECONDS;
   app.use('*', async (context, next) => {
@@ -174,6 +189,23 @@ export function createApp(options: CreateAppOptions = {}) {
     '/api/v1/products',
     createProductSearchRoutes({
       productSearch: options.productSearch ?? new DrizzleProductSearch(),
+    }),
+  );
+  app.route(
+    '/api/v1/stores',
+    createStoreRoutes({ storeLocator: options.storeLocator ?? new DrizzleStoreLocator() }),
+  );
+  app.route(
+    '/api/v1/alerts',
+    createAlertRoutes({
+      repository: options.priceAlertRepository ?? new DrizzlePriceAlertRepository(),
+    }),
+  );
+  app.route(
+    '/api/v1/baskets',
+    createBasketRoutes({
+      reader: options.basketPriceReader ?? new DrizzleBasketPriceReader(),
+      cache,
     }),
   );
   app.doc('/openapi.json', {
