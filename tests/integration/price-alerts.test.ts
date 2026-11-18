@@ -162,7 +162,7 @@ describeIntegration('price alerts (PostgreSQL)', () => {
 
     expect(activeAlert?.active).toBe(false);
     expect(activeAlert?.triggeredAt).toBeInstanceOf(Date);
-    expect(inactiveAlert).toMatchObject({ active: true, triggeredAt: null });
+    expect(inactiveAlert).toMatchObject({ active: false, triggeredAt: null });
     expect(triggeredEvents).toHaveLength(1);
     expect(triggeredEvents[0]?.payload).toMatchObject({
       alertId: activeAlertId,

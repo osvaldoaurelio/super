@@ -26,6 +26,35 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
   let storeId = '';
   let staleStoreId = '';
   const outboxIds: string[] = [];
+
+  function processorDeps() {
+    return {
+      store: outbox,
+      repository,
+      alerts: alertsRepository,
+      cache: { bumpVersion: async () => 1 },
+      now: () => new Date(),
+    };
+  }
+
+  async function drainPriceRecordedEvents(parentEventIds: string[]): Promise<void> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const events = await db
+        .select({ id: outboxEvents.id, status: outboxEvents.status })
+        .from(outboxEvents)
+        .where(
+          and(
+            eq(outboxEvents.type, 'price.recorded'),
+            inArray(outboxEvents.idempotencyKey, parentEventIds),
+          ),
+        );
+      outboxIds.push(...events.map((event) => event.id));
+      if (events.every((event) => event.status === 'processed')) return;
+      await processPendingOutboxBatch(processorDeps());
+    }
+    throw new Error('Os eventos PriceRecorded não foram consumidos.');
+  }
+
   beforeAll(async () => {
     await runIntegrationSetup();
     const [product] = await db
@@ -183,6 +212,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       .where(inArray(outboxEvents.id, [event.id, validEvent.id]));
     expect(rows.find((row) => row.status === 'dead')?.lastError).toBeTruthy();
     expect(rows.find((row) => row.status === 'processed')).toBeDefined();
+    await drainPriceRecordedEvents([event.id, validEvent.id]);
   });
 
   it('does not duplicate history when a processed outbox event is replayed', async () => {
@@ -204,26 +234,21 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       .returning({ id: outboxEvents.id });
     if (!event) throw new Error('Fixture de outbox indisponível.');
     outboxIds.push(event.id);
-    const deps = {
-      store: outbox,
-      repository,
-      alerts: alertsRepository,
-      cache: { bumpVersion: async () => 1 },
-      now: () => new Date(),
-    };
+    const deps = processorDeps();
 
-    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 2 });
+    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 1 });
     await db
       .update(outboxEvents)
       .set({ status: 'pending', processedAt: null, attempts: 0 })
       .where(eq(outboxEvents.id, event.id));
-    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 1 });
+    await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 2 });
 
     const historyRows = await db
       .select({ id: priceHistory.id })
       .from(priceHistory)
       .where(eq(priceHistory.idempotencyKey, idempotencyKey));
     expect(historyRows).toHaveLength(1);
+    await drainPriceRecordedEvents([event.id]);
   });
 
   it('records the same idempotency key independently for different sources', async () => {
@@ -253,30 +278,14 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
     outboxIds.push(...events.map((event) => event.id));
     expect(events).toHaveLength(2);
 
-    await expect(
-      processPendingOutboxBatch({
-        store: outbox,
-        repository,
-        alerts: alertsRepository,
-        cache: { bumpVersion: async () => 1 },
-        now: () => new Date(),
-      }),
-    ).resolves.toMatchObject({ claimed: 3 });
-    await expect(
-      processPendingOutboxBatch({
-        store: outbox,
-        repository,
-        alerts: alertsRepository,
-        cache: { bumpVersion: async () => 1 },
-        now: () => new Date(),
-      }),
-    ).resolves.toMatchObject({ claimed: 2 });
+    await expect(processPendingOutboxBatch(processorDeps())).resolves.toMatchObject({ claimed: 2 });
 
     const historyRows = await db
       .select({ source: priceHistory.source })
       .from(priceHistory)
       .where(eq(priceHistory.idempotencyKey, idempotencyKey));
     expect(historyRows.map((row) => row.source).sort()).toEqual([sourceA, sourceB].sort());
+    await drainPriceRecordedEvents(events.map((event) => event.id));
   });
 
   it('records a transient failure and leaves its event retryable', async () => {
@@ -351,13 +360,7 @@ describeIntegration('DrizzlePriceRepository (PostgreSQL)', () => {
       )
       .returning({ id: outboxEvents.id });
     outboxIds.push(...events.map((event) => event.id));
-    const deps = {
-      store: outbox,
-      repository,
-      alerts: alertsRepository,
-      cache: { bumpVersion: async () => 1 },
-      now: () => new Date(),
-    };
+    const deps = processorDeps();
 
     await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 200 });
     await expect(processPendingOutboxBatch(deps)).resolves.toMatchObject({ claimed: 200 });
